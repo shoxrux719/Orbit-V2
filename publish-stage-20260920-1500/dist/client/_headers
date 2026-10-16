@@ -1,0 +1,12 @@
+/_next/static/*
+  Cache-Control: no-store
+/orbit-design.css
+  Cache-Control: no-store
+/orbit-learning.css
+  Cache-Control: no-store
+/orbit-school.css
+  Cache-Control: no-store
+/orbit-campus.css
+  Cache-Control: no-store
+/orbit-sphere.svg
+  Cache-Control: no-cache

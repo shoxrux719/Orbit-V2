@@ -1,0 +1,15 @@
+{
+  "name": "orbit-local",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "design:build": "node design/build.cjs",
+    "test": "node design/run-tests.cjs",
+    "start": "node run-wrangler.cjs dev --local --config wrangler.local.json --ip 127.0.0.1 --port 3000",
+    "db:migrate": "node run-wrangler.cjs d1 migrations apply DB --local --config wrangler.local.json",
+    "school:setup": "node design/setup-admin.cjs"
+  },
+  "devDependencies": {
+    "wrangler": "^4.147.0"
+  }
+}

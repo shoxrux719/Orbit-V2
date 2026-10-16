@@ -1,0 +1,22 @@
+{
+  "name": "orbit-local",
+  "main": "publish-stage-20260920-1500/dist/server/orbit-entry.js",
+  "compatibility_date": "2026-05-15",
+  "compatibility_flags": ["nodejs_compat"],
+  "no_bundle": true,
+  "rules": [
+    { "type": "ESModule", "globs": ["**/*.js", "**/*.mjs"] }
+  ],
+  "assets": {
+    "directory": "publish-stage-20260920-1500/dist/client",
+    "binding": "ASSETS"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "orbit-local",
+      "database_id": "00000000-0000-4000-8000-000000000000",
+      "migrations_dir": "publish-stage-20260920-1500/dist/.openai/drizzle"
+    }
+  ]
+}

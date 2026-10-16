@@ -1,0 +1,14 @@
+CREATE TABLE campus_slots(id TEXT PRIMARY KEY,teacher_id TEXT NOT NULL REFERENCES school_users(id),starts_at INTEGER NOT NULL,minutes INTEGER NOT NULL,topic TEXT NOT NULL,created_at INTEGER NOT NULL);
+CREATE TABLE campus_bookings(id TEXT PRIMARY KEY,slot_id TEXT NOT NULL REFERENCES campus_slots(id),student_id TEXT NOT NULL REFERENCES school_users(id),note TEXT NOT NULL,status TEXT NOT NULL CHECK(status IN ('booked','completed','cancelled')),created_at INTEGER NOT NULL);
+CREATE UNIQUE INDEX campus_slot_booked ON campus_bookings(slot_id) WHERE status!='cancelled';
+CREATE TABLE campus_catalog(id TEXT PRIMARY KEY,kind TEXT NOT NULL CHECK(kind IN ('reward','event','university','video')),title TEXT NOT NULL,description TEXT NOT NULL,url TEXT NOT NULL DEFAULT '',cost INTEGER NOT NULL DEFAULT 0,stock INTEGER NOT NULL DEFAULT 0,date TEXT NOT NULL DEFAULT '',active INTEGER NOT NULL DEFAULT 1,created_at INTEGER NOT NULL);
+CREATE TABLE campus_orders(id TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES school_users(id),item_id TEXT NOT NULL REFERENCES campus_catalog(id),cost INTEGER NOT NULL,status TEXT NOT NULL DEFAULT 'requested' CHECK(status IN ('requested','fulfilled','cancelled')),created_at INTEGER NOT NULL);
+CREATE TABLE campus_event_bookings(event_id TEXT NOT NULL REFERENCES campus_catalog(id),user_id TEXT NOT NULL REFERENCES school_users(id),created_at INTEGER NOT NULL,PRIMARY KEY(event_id,user_id));
+CREATE TABLE campus_requests(id TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES school_users(id),kind TEXT NOT NULL,body TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'new',reply TEXT NOT NULL DEFAULT '',created_at INTEGER NOT NULL);
+CREATE TABLE campus_messages(id TEXT PRIMARY KEY,sender_id TEXT NOT NULL REFERENCES school_users(id),recipient_id TEXT NOT NULL REFERENCES school_users(id),body TEXT NOT NULL,read_at INTEGER,created_at INTEGER NOT NULL);
+CREATE INDEX campus_messages_recipient ON campus_messages(recipient_id,created_at);
+CREATE TABLE campus_attempts(id TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES school_users(id),mode TEXT NOT NULL,questions TEXT NOT NULL,answers TEXT,score INTEGER,total INTEGER NOT NULL,expires_at INTEGER NOT NULL,created_at INTEGER NOT NULL);
+CREATE TABLE campus_rooms(id TEXT PRIMARY KEY,owner_id TEXT NOT NULL REFERENCES school_users(id),name TEXT NOT NULL,kind TEXT NOT NULL CHECK(kind IN ('pair','group')),created_at INTEGER NOT NULL);
+CREATE TABLE campus_room_members(room_id TEXT NOT NULL REFERENCES campus_rooms(id) ON DELETE CASCADE,user_id TEXT NOT NULL REFERENCES school_users(id),seen_at INTEGER NOT NULL,PRIMARY KEY(room_id,user_id));
+CREATE TABLE campus_signals(id TEXT PRIMARY KEY,room_id TEXT NOT NULL REFERENCES campus_rooms(id) ON DELETE CASCADE,sender_id TEXT NOT NULL,recipient_id TEXT NOT NULL,payload TEXT NOT NULL,created_at INTEGER NOT NULL);
+CREATE INDEX campus_signals_recipient ON campus_signals(room_id,recipient_id,created_at);
