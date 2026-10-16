@@ -67,5 +67,5 @@ It does not automatically connect the existing local D1 database.
 
 Seven adapter tests cover SSR, routes, cookies, origin checks, role isolation,
 legacy learning results, request context isolation, atomic database writes,
-idempotent migrations and public/private build separation. The existing 31 tests
+idempotent migrations and public/private build separation. The existing 33 tests
 can still be run using `npm test`.
