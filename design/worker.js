@@ -20,6 +20,13 @@ export default {
     const forwarded = learningRequest(new Request(url,request),user);
     const response = await site.fetch(forwarded, env, ctx);
     if (!response.headers.get('content-type')?.includes('text/html')) return response;
+    if (typeof HTMLRewriter === 'undefined') {
+      const headers = new Headers(response.headers);
+      headers.delete('content-length');
+      headers.set('Cache-Control', 'private, no-store');
+      const styles = '<link rel="stylesheet" href="/orbit-design.css"><link rel="stylesheet" href="/orbit-learning.css"><link rel="stylesheet" href="/orbit-school.css"><link rel="stylesheet" href="/orbit-campus.css">';
+      return new Response((await response.text()).replace('</head>', styles+'</head>'), {status:response.status,headers});
+    }
     return new HTMLRewriter().on('head', {
       element(element) {
         element.append('<link rel="stylesheet" href="/orbit-design.css"><link rel="stylesheet" href="/orbit-learning.css"><link rel="stylesheet" href="/orbit-school.css"><link rel="stylesheet" href="/orbit-campus.css">', { html: true });

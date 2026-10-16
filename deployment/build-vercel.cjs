@@ -1,0 +1,30 @@
+const fs=require('node:fs');
+const path=require('node:path');
+const esbuild=require('esbuild');
+const root=path.resolve(__dirname,'..');
+require('../design/build.cjs');
+const parent=path.join(root,'.vercel'),out=path.join(parent,'output');
+fs.mkdirSync(parent,{recursive:true});
+if(fs.realpathSync(parent)!==parent||path.relative(root,out)!==path.join('.vercel','output'))throw Error('Unsafe build output directory');
+fs.rmSync(out,{recursive:true,force:true});
+const source=path.join(root,'publish-stage-20260920-1500/dist');
+const fn=path.join(out,'functions/orbit.func'),staticDir=path.join(out,'static');
+fs.mkdirSync(fn,{recursive:true});fs.mkdirSync(staticDir,{recursive:true});
+fs.cpSync(path.join(source,'server'),path.join(fn,'server'),{recursive:true,filter:file=>!['wrangler.json','.vite'].includes(path.basename(file))});
+fs.cpSync(path.join(source,'client'),staticDir,{recursive:true,filter:file=>!['.vite','.assetsignore','_headers'].includes(path.basename(file))});
+fs.cpSync(staticDir,path.join(fn,'assets'),{recursive:true});
+const assetNames=[];
+function walk(dir){for(const entry of fs.readdirSync(dir,{withFileTypes:true})){const file=path.join(dir,entry.name);if(entry.isDirectory())walk(file);else assetNames.push('/'+path.relative(staticDir,file).split(path.sep).join('/'));}}
+walk(staticDir);fs.writeFileSync(path.join(fn,'assets.json'),JSON.stringify(assetNames));
+fs.mkdirSync(path.join(fn,'deployment'),{recursive:true});
+for(const file of ['server.js','runtime-env.js'])fs.copyFileSync(path.join(__dirname,file),path.join(fn,'deployment',file));
+esbuild.buildSync({entryPoints:[path.join(__dirname,'database.js')],outfile:path.join(fn,'deployment/database.js'),bundle:true,platform:'node',format:'esm',target:'node22',minify:false,banner:{js:"import {createRequire} from 'node:module';const require=createRequire(import.meta.url);"}});
+fs.writeFileSync(path.join(fn,'server/orbit-env.js'),"export {env} from '../deployment/runtime-env.js';\n");
+let patched=0;
+function patch(dir){for(const entry of fs.readdirSync(dir,{withFileTypes:true})){const file=path.join(dir,entry.name);if(entry.isDirectory())patch(file);else if(entry.name.endsWith('.js')){const s=fs.readFileSync(file,'utf8');if(s.includes('cloudflare:workers')){const relative=path.relative(path.dirname(file),path.join(fn,'server/orbit-env.js')).split(path.sep).join('/');fs.writeFileSync(file,s.replaceAll('cloudflare:workers',relative.startsWith('.')?relative:'./'+relative));patched++;}}}}
+patch(path.join(fn,'server'));if(patched!==1)throw Error('Unexpected Cloudflare imports: '+patched);
+fs.writeFileSync(path.join(fn,'handler.mjs'),"export {default,createFetch,createNodeHandler} from './deployment/server.js';\n");
+fs.writeFileSync(path.join(fn,'package.json'),JSON.stringify({type:'module'}));
+fs.writeFileSync(path.join(fn,'.vc-config.json'),JSON.stringify({runtime:'nodejs22.x',handler:'handler.mjs',launcherType:'Nodejs',maxDuration:60}));
+fs.writeFileSync(path.join(out,'config.json'),JSON.stringify({version:3,routes:[{src:'/_next/static/(.*)',headers:{'Cache-Control':'no-store'},continue:true},{src:'/orbit-(.*)\\.css',headers:{'Cache-Control':'no-store'},continue:true},{handle:'filesystem'},{src:'/(.*)',dest:'/orbit'}]},null,2));
+console.log('Vercel output ready: static assets, SSR and API function. No local credentials or database copied.');
