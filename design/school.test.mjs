@@ -29,6 +29,14 @@ async function request(path,b,cookie='',origin='http://127.0.0.1:3000',method=b?
 }
 async function login(id){const result=await request('/api/school/login',{identifier:phones[id]||id,password:pass,portal:phones[id]?'student':'staff'});assert.equal(result.status,200);return result.cookie.split(';')[0];}
 async function group(admin,teacher='teacher',members=['student']){const g=await request('/api/school/groups',{name:'Test group',level:'A2',teacherId:teacher},admin);assert.equal(g.status,201);assert.equal((await request(`/api/school/groups/${g.data.id}/members`,{studentIds:members},admin)).status,200);return g.data.id;}
+
+test('profile images revalidate without resending bytes and still require a live session',async()=>{
+ const cookie=await login('student'),uploaded=await request('/api/school/media',{kind:'avatar',data:'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Zl1AAAAAASUVORK5CYII='},cookie);assert.equal(uploaded.status,201);
+ const read=async(headers)=>{const req=new Request('http://127.0.0.1:3000'+uploaded.data.url,{headers});return handleSchool(req,env,await schoolUser(req,env));};
+ const first=await read({Cookie:cookie});assert.equal(first.status,200);assert.equal(first.headers.get('cache-control'),'private, no-cache');
+ const tag=first.headers.get('etag');assert.ok(tag);const unchanged=await read({Cookie:cookie,'If-None-Match':tag});assert.equal(unchanged.status,304);assert.equal((await unchanged.arrayBuffer()).byteLength,0);
+ await request('/api/auth/logout',{},cookie);assert.equal((await read({Cookie:cookie,'If-None-Match':tag})).status,401);
+});
 test('closed enrollment, role checks, CSRF and secure sessions',async()=>{
  assert.equal((await request('/api/school/users',{role:'student'})).status,401);
  const admin=await login('admin'),student=await login('student');

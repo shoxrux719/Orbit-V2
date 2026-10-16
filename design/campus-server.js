@@ -1,4 +1,5 @@
 import {practiceBank} from './practice-bank.js';
+import {chatReactions,chatStickers} from './chat-data.js';
 const response=(data,status=200)=>Response.json(data,{status,headers:{'Cache-Control':'no-store'}});
 const all=async(env,sql,...args)=>(await env.DB.prepare(sql).bind(...args).all()).results;
 const run=(env,sql,...args)=>env.DB.prepare(sql).bind(...args).run();
@@ -96,13 +97,32 @@ export async function handleCampus(request,env,user){
   if(path==='/api/campus/requests/reply'&&request.method==='POST'){admin(user);await run(env,'UPDATE campus_requests SET reply=?,status=? WHERE id=?',str(b.reply,3000),one(b.status,['done','in_progress']),b.id);return response({ok:true});}
   if(path==='/api/campus/messages'&&request.method==='GET'){
    const contacts=await all(env,`SELECT DISTINCT u.* FROM school_users u WHERE u.active=1 AND u.id!=? AND (u.role='admin' OR ?='admin' OR (u.role='teacher' AND u.id IN (SELECT g.teacher_id FROM school_groups g JOIN school_members m ON m.group_id=g.id WHERE m.student_id=?)) OR (u.role='student' AND u.id IN (SELECT m.student_id FROM school_members m JOIN school_groups g ON g.id=m.group_id WHERE g.teacher_id=?)))`,user.id,user.role,user.id,user.id);
-   const messages=await all(env,'SELECT * FROM campus_messages WHERE sender_id=? OR recipient_id=? ORDER BY created_at DESC LIMIT 300',user.id,user.id);return response({contacts:contacts.map(person),messages:messages.reverse()});
+   const messages=await all(env,'SELECT * FROM campus_messages WHERE sender_id=? OR recipient_id=? ORDER BY created_at DESC,id DESC LIMIT 300',user.id,user.id);
+   const reactions=await all(env,'SELECT r.message_id,r.user_id,r.emoji FROM campus_message_reactions r JOIN (SELECT id FROM campus_messages WHERE sender_id=? OR recipient_id=? ORDER BY created_at DESC,id DESC LIMIT 300) m ON m.id=r.message_id',user.id,user.id);
+   const decorated=messages.reverse().map(message=>({...message,reactions:reactions.filter(r=>r.message_id===message.id).map(({user_id,emoji})=>({userId:user_id,emoji}))}));
+   const tag='"chat-'+await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify([contacts.map(person),decorated]))).then(hash=>Array.from(new Uint8Array(hash)).map(n=>n.toString(16).padStart(2,'0')).join(''))+'"';
+   if(request.headers.get('if-none-match')===tag)return new Response(null,{status:304,headers:{ETag:tag,'Cache-Control':'private, no-cache'}});
+   const result=response({contacts:contacts.map(person),messages:decorated});result.headers.set('ETag',tag);return result;
   }
   if(path==='/api/campus/messages/read'&&request.method==='POST'){await run(env,'UPDATE campus_messages SET read_at=? WHERE recipient_id=? AND sender_id=? AND read_at IS NULL',now,user.id,str(b.senderId,80));return response({ok:true});}
   if(path==='/api/campus/messages'&&request.method==='POST'){
    const target=await env.DB.prepare('SELECT * FROM school_users WHERE id=? AND active=1').bind(str(b.recipientId,80)).first();if(!target||target.id===user.id)fail(400,'Выберите получателя.');
    if(user.role!=='admin'&&target.role!=='admin'&&!await env.DB.prepare('SELECT 1 FROM school_groups g JOIN school_members m ON m.group_id=g.id WHERE (g.teacher_id=? AND m.student_id=?) OR (g.teacher_id=? AND m.student_id=?)').bind(user.id,target.id,target.id,user.id).first())fail(403,'Можно написать своему учителю или администрации.');
-   const recent=await env.DB.prepare('SELECT count(*) AS count FROM campus_messages WHERE sender_id=? AND created_at>?').bind(user.id,now-60000).first();if(recent.count>=20)fail(429,'Слишком много сообщений. Подождите минуту.');await run(env,'INSERT INTO campus_messages VALUES(?,?,?,?,NULL,?)',id(),user.id,target.id,str(b.body,3000),now);return response({ok:true},201);
+   const kind=one(b.kind||'text',['text','sticker']),stickerId=kind==='sticker'?one(b.stickerId,chatStickers.map(s=>s.id)):null,textBody=kind==='sticker'?'':str(b.body,3000);
+   const replyTo=b.replyTo?str(b.replyTo,80):null,clientId=b.clientId?str(b.clientId,80):null;
+   if(replyTo&&!await env.DB.prepare('SELECT id FROM campus_messages WHERE id=? AND ((sender_id=? AND recipient_id=?) OR (sender_id=? AND recipient_id=?))').bind(replyTo,user.id,target.id,target.id,user.id).first())fail(400,'Можно ответить только на сообщение этого разговора.');
+   if(clientId){const existing=await env.DB.prepare('SELECT * FROM campus_messages WHERE sender_id=? AND client_id=?').bind(user.id,clientId).first();if(existing){if(existing.recipient_id!==target.id||existing.kind!==kind||existing.body!==textBody||existing.sticker_id!==stickerId||existing.reply_to!==replyTo)fail(409,'Этот идентификатор уже использован.');return response({ok:true,message:{...existing,reactions:[]}});}}
+   const recent=await env.DB.prepare('SELECT count(*) AS count FROM campus_messages WHERE sender_id=? AND created_at>?').bind(user.id,now-60000).first();if(recent.count>=20)fail(429,'Слишком много сообщений. Подождите минуту.');
+   const message={id:id(),sender_id:user.id,recipient_id:target.id,body:textBody,read_at:null,created_at:now,kind,sticker_id:stickerId,reply_to:replyTo,client_id:clientId};
+   await run(env,'INSERT INTO campus_messages(id,sender_id,recipient_id,body,read_at,created_at,kind,sticker_id,reply_to,client_id) VALUES(?,?,?,?,NULL,?,?,?,?,?)',message.id,user.id,target.id,textBody,now,kind,stickerId,replyTo,clientId);return response({ok:true,message:{...message,reactions:[]}},201);
+  }
+  const reactionMatch=path.match(/^\/api\/campus\/messages\/([^/]+)\/reactions$/);
+  if(reactionMatch&&request.method==='POST'){
+   const message=await env.DB.prepare('SELECT id FROM campus_messages WHERE id=? AND (sender_id=? OR recipient_id=?)').bind(reactionMatch[1],user.id,user.id).first();if(!message)fail(404,'Сообщение не найдено.');
+   const emoji=one(b.emoji,chatReactions);if(typeof b.active!=='boolean')fail(400,'Укажите состояние реакции.');
+   if(b.active)await run(env,'INSERT INTO campus_message_reactions VALUES(?,?,?,?) ON CONFLICT(message_id,user_id,emoji) DO NOTHING',message.id,user.id,emoji,now);
+   else await run(env,'DELETE FROM campus_message_reactions WHERE message_id=? AND user_id=? AND emoji=?',message.id,user.id,emoji);
+   return response({ok:true});
   }
   if(path==='/api/campus/practice/start'&&request.method==='POST'){
    const recent=await env.DB.prepare('SELECT count(*) AS count FROM campus_attempts WHERE user_id=? AND created_at>?').bind(user.id,now-60000).first();if(recent.count>=6)fail(429,'Подождите минуту перед новой попыткой.');

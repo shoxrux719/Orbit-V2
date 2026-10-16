@@ -1,6 +1,8 @@
 import site from './index.js';
 import { schoolUser, handleSchool, learningRequest } from './school-server.js';
 import { handleCampus } from './campus-server.js';
+const revision='4eee93355b21';
+const styles=['design','learning','school','campus'].map(name=>`<link rel="stylesheet" href="/orbit-${name}-${revision}.css">`).join('');
 
 export default {
   async fetch(request, env, ctx) {
@@ -24,12 +26,12 @@ export default {
       const headers = new Headers(response.headers);
       headers.delete('content-length');
       headers.set('Cache-Control', 'private, no-store');
-      const styles = '<link rel="stylesheet" href="/orbit-design.css"><link rel="stylesheet" href="/orbit-learning.css"><link rel="stylesheet" href="/orbit-school.css"><link rel="stylesheet" href="/orbit-campus.css">';
-      return new Response((await response.text()).replace('</head>', styles+'</head>'), {status:response.status,headers});
+      const preload=user?'':`<link rel="preload" as="image" href="/orbit-auth-studio-${revision}.webp" media="(min-width:761px)" fetchpriority="high"><link rel="preload" as="image" href="/orbit-auth-studio-mobile-${revision}.webp" media="(max-width:760px)" fetchpriority="high">`;
+      return new Response((await response.text()).replace('</head>', preload+styles+'</head>'), {status:response.status,headers});
     }
     return new HTMLRewriter().on('head', {
       element(element) {
-        element.append('<link rel="stylesheet" href="/orbit-design.css"><link rel="stylesheet" href="/orbit-learning.css"><link rel="stylesheet" href="/orbit-school.css"><link rel="stylesheet" href="/orbit-campus.css">', { html: true });
+        element.append(styles, { html: true });
       },
     }).transform(response);
   },

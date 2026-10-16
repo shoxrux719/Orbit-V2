@@ -41,7 +41,7 @@ The adapter's `batch` uses database transactions, including rollback on failure.
 
 5. Redeploy the project so Vercel receives the database environment variables.
 
-The setup command applies seven versioned migrations and creates the first
+The setup command applies eight versioned migrations and creates the first
 administrator only if none exists. Repeating it preserves the existing password
 and data. It does not upload the local student database. The production database
 starts empty; transferring existing student data is a separate, explicit action.
@@ -65,7 +65,7 @@ node deployment/preview.mjs
 The preview is at `http://127.0.0.1:3001` and uses the built Vercel function.
 It does not automatically connect the existing local D1 database.
 
-Seven adapter tests cover SSR, routes, cookies, origin checks, role isolation,
+Eight adapter tests cover SSR, routes, cookies, origin checks, role isolation,
 legacy learning results, request context isolation, atomic database writes,
-idempotent migrations and public/private build separation. The existing 34 tests
+idempotent migrations, optimized assets and public/private build separation. The existing 38 tests
 can still be run using `npm test`.

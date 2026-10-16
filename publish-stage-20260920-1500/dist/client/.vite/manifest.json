@@ -21,7 +21,7 @@
     ]
   },
   "app/page.tsx": {
-    "file": "_next/static/chunks/page-orbit-20261004.js",
+    "file": "_next/static/chunks/page-orbit-4eee93355b21.js",
     "name": "page",
     "src": "app/page.tsx",
     "isDynamicEntry": true,
@@ -62,7 +62,7 @@
     ]
   },
   "virtual:vinext-app-browser-entry": {
-    "file": "_next/static/chunks/index-C2LGDuAU-orbit.js",
+    "file": "_next/static/chunks/index-orbit-4eee93355b21.js",
     "name": "index",
     "src": "virtual:vinext-app-browser-entry",
     "isEntry": true,

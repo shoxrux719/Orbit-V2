@@ -13,7 +13,7 @@ const password='Private-test-password-2026';
 
 test('production migrations and administrator setup are idempotent and preserve data',async()=>{
  const client=createClient({url:'file::memory:'});try{
-  assert.equal((await applyMigrations(client,migrationDir)).length,7);
+  assert.equal((await applyMigrations(client,migrationDir)).length,8);
   await assert.rejects(ensureAdministrator(client),/ORBIT_ADMIN/);
   assert.equal((await ensureAdministrator(client,{password})).created,true);
   const before=(await client.execute("SELECT * FROM school_users WHERE role='admin'")).rows[0];
@@ -41,7 +41,7 @@ test('request environments stay isolated across concurrent async work',async()=>
 test('Vercel serves SSR login and explicit database errors without a configured database',async()=>{
  const app=createFetch({database:()=>null});
  for(const route of ['/','/student','/teacher','/admin','/people/example']){
-  const response=await app(new Request('https://orbit.example'+route));const html=await response.text();assert.equal(response.status,200);assert.match(html,/orbit-campus\.css/);assert.match(html,/page-orbit-20261004\.js/);assert.equal(response.headers.get('cache-control'),'private, no-store');
+  const response=await app(new Request('https://orbit.example'+route));const html=await response.text();assert.equal(response.status,200);assert.match(html,/orbit-campus-[a-f0-9]{12}\.css/);assert.match(html,/page-orbit-[a-f0-9]{12}\.js/);assert.equal(response.headers.get('cache-control'),'private, no-store');
  }
  const account=await app(new Request('https://orbit.example/api/account'));assert.equal((await account.json()).user,null);
  const login=await app(new Request('https://orbit.example/api/school/login',{method:'POST'}));assert.equal(login.status,503);assert.match((await login.json()).error,/база/);
@@ -82,4 +82,21 @@ test('build output includes only public assets and the explicit Vercel function 
  for(const route of ['/orbit-auth-studio.png','/orbit-campus.css','/_next/static/chunks/orbit-design.js'])assert.ok((await fs.stat(base+'/static'+route)).size>0);
  const assets=JSON.parse(await fs.readFile(base+'/functions/orbit.func/assets.json','utf8'));assert.ok(assets.every(name=>!name.includes('.dev.vars')&&!name.includes('.sqlite')&&!name.includes('.local-admin')));
  await assert.rejects(fs.stat(base+'/static/server'));await assert.rejects(fs.stat(base+'/static/.env.production.local'));
+});
+
+test('optimized assets use revisioned URLs, immutable cache routes and compact WebP images',async()=>{
+ const base='.vercel/output/static',revision=JSON.parse(await fs.readFile(base+'/orbit-assets.json','utf8'));
+ assert.match(revision.version,/^[a-f0-9]{12}$/);
+ const app=createFetch({database:()=>null}),html=await (await app(new Request('https://orbit.example/'))).text();
+ assert.ok(html.includes(revision.pageName));assert.ok(html.includes(revision.indexName));
+ for(const name of ['design','learning','school','campus']){
+  const file=`/orbit-${name}-${revision.version}.css`;assert.ok(html.includes(file));assert.ok((await fs.stat(base+file)).size>0);
+ }
+ const page=await fs.readFile(base+'/_next/static/chunks/'+revision.pageName,'utf8');assert.ok(page.includes(revision.designName));
+ const legacyStyles=await fs.readFile(base+'/_next/static/css/index.BUnWrGnF.css','utf8');assert.doesNotMatch(legacyStyles,/listening-hero\.png|homework-sprite\.png|orbit-hero\.png/);
+ assert.ok((await fs.stat(base+`/orbit-auth-studio-${revision.version}.webp`)).size<80000);
+ assert.ok((await fs.stat(base+`/orbit-auth-studio-mobile-${revision.version}.webp`)).size<40000);
+ assert.ok((await fs.stat(base+'/_next/static/chunks/'+revision.designName)).size<300000);
+ const config=JSON.parse(await fs.readFile('.vercel/output/config.json','utf8'));assert.ok(config.routes.some(r=>r.headers?.['Cache-Control']?.includes('immutable')));
+ for(const match of html.matchAll(/(?:src|href)="(\/(?:_next\/static|orbit-)[^"?#]+)(?:[?#][^"]*)?"/g))assert.ok((await fs.stat(base+match[1])).isFile(),match[1]);
 });

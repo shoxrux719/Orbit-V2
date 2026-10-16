@@ -15,7 +15,7 @@ function createComponents(runtime,React) {
  const h=(type,props,...children)=>{const {key,...rest}=props||{};return runtime.jsxs(type,{...rest,...(children.length?{children:children.length===1?children[0]:children}:{})},key);};
  const {useState,useEffect,useCallback}=React;
  function Avatar({person,small=false}) {
-  if(person.avatar)return <img className={'os-avatar'+(small?' os-avatar-small':'')} src={person.avatar} alt={'Фото '+fullName(person)}/>;
+  if(person.avatar)return <img className={'os-avatar'+(small?' os-avatar-small':'')} src={person.avatar} loading="lazy" decoding="async" width={small?40:100} height={small?40:100} alt={'Фото '+fullName(person)}/>;
   const female=person.gender==='female';
   return <span className={'os-avatar os-avatar-default '+(small?'os-avatar-small':'')} role="img" aria-label={person.gender==='unspecified'?'Базовый аватар':female?'Базовый женский аватар':'Базовый мужской аватар'}><svg viewBox="0 0 100 100" aria-hidden="true"><circle cx="50" cy="50" r="50" fill={female?'#e5ddff':person.gender==='male'?'#dceeff':'#e7eeef'}/>{female&&<path d="M25 57V37a25 25 0 0 1 50 0v27H25Z" fill="#424775"/>}<path d="M17 100v-7a33 33 0 0 1 66 0v7" fill={female?'#9079d9':person.gender==='male'?'#5795d1':'#7ba5a5'}/><path d="M41 61v12c0 10 18 10 18 0V61" fill="#ecc1a2"/><ellipse cx="50" cy="42" rx="19" ry="24" fill="#f7d4b9"/><path d={female?'M30 39C26 10 72 5 71 39 61 31 49 30 42 24c-2 9-7 14-12 15Z':'M30 37c-3-15 5-24 19-24 16 0 24 8 22 24-9-6-18-10-27-8-4 6-8 8-14 8Z'} fill="#424775"/><circle cx="43" cy="43" r="1.8" fill="#424775"/><circle cx="58" cy="43" r="1.8" fill="#424775"/><path d="M44 54q6 5 12 0" fill="none" stroke="#bf8268" strokeWidth="2" strokeLinecap="round"/></svg></span>;
  }

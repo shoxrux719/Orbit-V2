@@ -29,7 +29,7 @@ export function createFetch({database=()=>getDatabase(),site=worker}={}){
   return withEnvironment(bindings,async()=>{
    const response=await site.fetch(request,bindings,{waitUntil:promise=>promise.catch(error=>console.error('Background task failed:',error.name))});
    const headers=new Headers(response.headers);
-   if(url.pathname.startsWith('/api/')||headers.get('Content-Type')?.includes('text/html'))headers.set('Cache-Control','private, no-store');
+   if((url.pathname.startsWith('/api/')&&!/^\/api\/school\/media\/[a-zA-Z0-9-]+$/.test(url.pathname))||headers.get('Content-Type')?.includes('text/html'))headers.set('Cache-Control','private, no-store');
    headers.set('X-Content-Type-Options','nosniff');
    return new Response(request.method==='HEAD'?null:response.body,{status:response.status,headers});
   });
