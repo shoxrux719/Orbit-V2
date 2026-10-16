@@ -26,3 +26,17 @@ export function studentPhone(number,country='uz'){
  const full=selected.code+number;
  return /^\+[1-9]\d{7,14}$/.test(full)?full:'';
 }
+export function formatStudentNumber(number,country='uz'){
+ const digits=String(number).replace(/\D/g,''),sizes={uz:[2,3,2,2],kz:[3,3,2,2],ru:[3,3,2,2],gb:[4,3,3],us:[3,3,4]}[country];
+ if(!sizes)return digits;
+ const groups=[];let offset=0;
+ for(const size of sizes){if(offset>=digits.length)break;groups.push(digits.slice(offset,offset+size));offset+=size;}
+ if(offset<digits.length)groups.push(digits.slice(offset));
+ return groups.join(' ');
+}
+export function phoneCaretForDigits(formatted,count){
+ if(count<=0)return 0;
+ let found=0;
+ for(let index=0;index<formatted.length;index++)if(/\d/.test(formatted[index])&&++found===count)return index+1;
+ return formatted.length;
+}

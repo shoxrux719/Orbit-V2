@@ -1,9 +1,9 @@
-import {phoneCountries,parsePhoneInput,studentPhone} from './auth-phone.js';
+import {phoneCountries,parsePhoneInput,studentPhone,formatStudentNumber,phoneCaretForDigits} from './auth-phone.js';
 import {createVisuals} from './campus-icons.jsx';
 
 export function createCampusLogin(runtime,React){
  const h=(type,props,...children)=>{const {key,...rest}=props||{};return runtime.jsxs(type,{...rest,...(children.length?{children:children.length===1?children[0]:children}:{})},key);};
- const {useState,useEffect,useRef}=React,{Icon}=createVisuals(runtime);
+ const {useState,useEffect,useLayoutEffect,useRef}=React,{Icon}=createVisuals(runtime);
  function ProfileIcon({staff}){return <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{staff?<><rect x="10" y="10" width="28" height="34" rx="5"/><rect x="19" y="4" width="10" height="12" rx="3"/><circle cx="24" cy="25" r="4"/><path d="M17 37a7 7 0 0 1 14 0"/></>:<><circle cx="24" cy="10" r="6"/><path d="M24 28c-6-6-13-7-20-5v18c8-2 14 0 20 4 6-4 12-6 20-4V23c-7-2-14-1-20 5Zm0 0v17M10 20v-2m28 2v-2"/></>}</svg>;}
  function CountryFlag({country}){
   if(country==='international')return <span className="oa-country-global"><Icon name="globe" size={23}/></span>;
@@ -11,11 +11,30 @@ export function createCampusLogin(runtime,React){
  }
  function StudentForm({account,busy,error,visible,onVisible,onBack,onSubmit,inputRef}){
   const [country,setCountry]=useState('uz'),[number,setNumber]=useState(''),[password,setPassword]=useState(''),[recovery,setRecovery]=useState(false);
+  const pendingCaret=useRef(null),formattedNumber=formatStudentNumber(number,country);
   const selected=phoneCountries.find(c=>c.id===country),phone=studentPhone(number,country),ready=!!phone&&password.trim().length>0;
-  function changePhone(event){const next=parsePhoneInput(event.target.value,country);setCountry(next.country);setNumber(next.number);}
+  useLayoutEffect(()=>{const input=inputRef.current;if(pendingCaret.current!==null&&input===document.activeElement){const position=phoneCaretForDigits(formattedNumber,pendingCaret.current);input.setSelectionRange(position,position);}pendingCaret.current=null;});
+  function changePhone(event){
+   const input=event.target,raw=input.value,next=parsePhoneInput(raw,country),removed=raw.replace(/\D/g,'').length-next.number.length;
+   const inputType=event.nativeEvent?.inputType;
+   if(next.number===number&&raw!==formattedNumber&&['deleteContentBackward','deleteContentForward'].includes(inputType)){
+    const offset=raw.slice(0,input.selectionStart??raw.length).replace(/\D/g,'').length,index=inputType==='deleteContentBackward'?offset-1:offset;
+    if(index>=0&&index<number.length){pendingCaret.current=index;setNumber(number.slice(0,index)+number.slice(index+1));return;}
+   }
+   pendingCaret.current=Math.max(0,raw.slice(0,input.selectionStart??raw.length).replace(/\D/g,'').length-removed);
+   setCountry(next.country);setNumber(next.number);
+  }
+  function phoneKeyDown(event){
+   const input=event.currentTarget,start=input.selectionStart,end=input.selectionEnd;
+   if(start!==end||event.altKey||event.ctrlKey||event.metaKey||!['Backspace','Delete'].includes(event.key))return;
+   if(input.value[event.key==='Backspace'?start-1:start]!==' ')return;
+   const offset=input.value.slice(0,start).replace(/\D/g,'').length,index=event.key==='Backspace'?offset-1:offset;
+   if(index<0||index>=number.length)return;
+   event.preventDefault();pendingCaret.current=index;setNumber(number.slice(0,index)+number.slice(index+1));
+  }
   return <div className="oa-student"><h1>Student<span>.</span></h1><p className="oa-description">Do your homework on your computer</p>
    <form className="oa-form oa-student-form" onSubmit={event=>{if(!ready){event.preventDefault();return;}onSubmit(event);}}>
-    <div className="oa-phone-entry"><label className="oa-country"><CountryFlag country={country}/><span className="oa-dial-code">{selected.code}</span><svg className="oa-country-chevron" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg><select aria-label="Код страны" value={country} onChange={event=>setCountry(event.target.value)} disabled={busy}>{phoneCountries.map(c=><option key={c.id} value={c.id}>{c.name} ({c.code})</option>)}</select></label><label className="oa-national-phone"><span className="oa-sr-only">Номер телефона</span><input ref={inputRef} name="nationalPhone" aria-label="Номер телефона" type="tel" inputMode="tel" autoComplete="tel-national" value={number} onChange={changePhone} placeholder={selected.placeholder} required maxLength="40" disabled={busy}/></label><input type="hidden" name="phone" value={phone}/></div>
+    <div className="oa-phone-entry"><label className="oa-country"><CountryFlag country={country}/><span className="oa-dial-code">{selected.code}</span><svg className="oa-country-chevron" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg><select aria-label="Код страны" value={country} onChange={event=>setCountry(event.target.value)} disabled={busy}>{phoneCountries.map(c=><option key={c.id} value={c.id}>{c.name} ({c.code})</option>)}</select></label><label className="oa-national-phone"><span className="oa-sr-only">Номер телефона</span><input ref={inputRef} name="nationalPhone" aria-label="Номер телефона" type="tel" inputMode="tel" autoComplete="tel-national" value={formattedNumber} onChange={changePhone} onKeyDown={phoneKeyDown} placeholder={selected.placeholder} required maxLength="40" disabled={busy}/></label><input type="hidden" name="phone" value={phone}/></div>
     <label className="oa-student-password"><span className="oa-sr-only">Пароль</span><span className="oa-password"><Icon name="lock" className="oa-password-lock"/><input aria-label="Пароль" name="password" type={visible?'text':'password'} autoComplete="current-password" value={password} onChange={event=>setPassword(event.target.value)} placeholder="Password" required maxLength="200" disabled={busy}/><button type="button" onClick={onVisible} disabled={busy} aria-label={visible?'Скрыть пароль':'Показать пароль'} aria-pressed={visible}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/>{visible&&<path d="m3 3 18 18"/>}</svg></button></span></label>
     <button className="oa-forgot" type="button" onClick={()=>setRecovery(!recovery)} disabled={busy} aria-expanded={recovery} aria-controls="oa-recovery">Forgot password?</button>
     {recovery&&<div id="oa-recovery" className="oa-recovery" role="status"><b>Поможем вернуться в ORBIT.</b><p>Обратись к администрации своего центра и сообщи номер телефона, указанный при регистрации. Администратор выдаст новый пароль.</p><p>Сам пароль никому не отправляй.</p><button type="button" onClick={()=>setRecovery(false)}>Понятно</button></div>}

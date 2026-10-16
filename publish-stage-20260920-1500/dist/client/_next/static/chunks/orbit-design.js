@@ -819,6 +819,25 @@ function studentPhone(number, country = "uz") {
   const full = selected.code + number;
   return /^\+[1-9]\d{7,14}$/.test(full) ? full : "";
 }
+function formatStudentNumber(number, country = "uz") {
+  const digits = String(number).replace(/\D/g, ""), sizes = { uz: [2, 3, 2, 2], kz: [3, 3, 2, 2], ru: [3, 3, 2, 2], gb: [4, 3, 3], us: [3, 3, 4] }[country];
+  if (!sizes) return digits;
+  const groups = [];
+  let offset = 0;
+  for (const size of sizes) {
+    if (offset >= digits.length) break;
+    groups.push(digits.slice(offset, offset + size));
+    offset += size;
+  }
+  if (offset < digits.length) groups.push(digits.slice(offset));
+  return groups.join(" ");
+}
+function phoneCaretForDigits(formatted, count) {
+  if (count <= 0) return 0;
+  let found = 0;
+  for (let index = 0; index < formatted.length; index++) if (/\d/.test(formatted[index]) && ++found === count) return index + 1;
+  return formatted.length;
+}
 
 // design/campus-icons.jsx
 function createVisuals(runtime) {
@@ -848,7 +867,7 @@ function createCampusLogin(runtime, React) {
     const { key, ...rest } = props || {};
     return runtime.jsxs(type, { ...rest, ...children.length ? { children: children.length === 1 ? children[0] : children } : {} }, key);
   };
-  const { useState, useEffect, useRef } = React, { Icon } = createVisuals(runtime);
+  const { useState, useEffect, useLayoutEffect, useRef } = React, { Icon } = createVisuals(runtime);
   function ProfileIcon({ staff }) {
     return /* @__PURE__ */ h("svg", { viewBox: "0 0 48 48", fill: "none", stroke: "currentColor", strokeWidth: "2.2", strokeLinecap: "round", strokeLinejoin: "round", "aria-hidden": "true" }, staff ? /* @__PURE__ */ h(runtime.Fragment, null, /* @__PURE__ */ h("rect", { x: "10", y: "10", width: "28", height: "34", rx: "5" }), /* @__PURE__ */ h("rect", { x: "19", y: "4", width: "10", height: "12", rx: "3" }), /* @__PURE__ */ h("circle", { cx: "24", cy: "25", r: "4" }), /* @__PURE__ */ h("path", { d: "M17 37a7 7 0 0 1 14 0" })) : /* @__PURE__ */ h(runtime.Fragment, null, /* @__PURE__ */ h("circle", { cx: "24", cy: "10", r: "6" }), /* @__PURE__ */ h("path", { d: "M24 28c-6-6-13-7-20-5v18c8-2 14 0 20 4 6-4 12-6 20-4V23c-7-2-14-1-20 5Zm0 0v17M10 20v-2m28 2v-2" })));
   }
@@ -858,11 +877,40 @@ function createCampusLogin(runtime, React) {
   }
   function StudentForm({ account, busy, error, visible, onVisible, onBack, onSubmit, inputRef }) {
     const [country, setCountry] = useState("uz"), [number, setNumber] = useState(""), [password, setPassword] = useState(""), [recovery, setRecovery] = useState(false);
+    const pendingCaret = useRef(null), formattedNumber = formatStudentNumber(number, country);
     const selected = phoneCountries.find((c) => c.id === country), phone = studentPhone(number, country), ready = !!phone && password.trim().length > 0;
+    useLayoutEffect(() => {
+      const input = inputRef.current;
+      if (pendingCaret.current !== null && input === document.activeElement) {
+        const position = phoneCaretForDigits(formattedNumber, pendingCaret.current);
+        input.setSelectionRange(position, position);
+      }
+      pendingCaret.current = null;
+    });
     function changePhone(event) {
-      const next = parsePhoneInput(event.target.value, country);
+      const input = event.target, raw = input.value, next = parsePhoneInput(raw, country), removed = raw.replace(/\D/g, "").length - next.number.length;
+      const inputType = event.nativeEvent?.inputType;
+      if (next.number === number && raw !== formattedNumber && ["deleteContentBackward", "deleteContentForward"].includes(inputType)) {
+        const offset = raw.slice(0, input.selectionStart ?? raw.length).replace(/\D/g, "").length, index = inputType === "deleteContentBackward" ? offset - 1 : offset;
+        if (index >= 0 && index < number.length) {
+          pendingCaret.current = index;
+          setNumber(number.slice(0, index) + number.slice(index + 1));
+          return;
+        }
+      }
+      pendingCaret.current = Math.max(0, raw.slice(0, input.selectionStart ?? raw.length).replace(/\D/g, "").length - removed);
       setCountry(next.country);
       setNumber(next.number);
+    }
+    function phoneKeyDown(event) {
+      const input = event.currentTarget, start = input.selectionStart, end = input.selectionEnd;
+      if (start !== end || event.altKey || event.ctrlKey || event.metaKey || !["Backspace", "Delete"].includes(event.key)) return;
+      if (input.value[event.key === "Backspace" ? start - 1 : start] !== " ") return;
+      const offset = input.value.slice(0, start).replace(/\D/g, "").length, index = event.key === "Backspace" ? offset - 1 : offset;
+      if (index < 0 || index >= number.length) return;
+      event.preventDefault();
+      pendingCaret.current = index;
+      setNumber(number.slice(0, index) + number.slice(index + 1));
     }
     return /* @__PURE__ */ h("div", { className: "oa-student" }, /* @__PURE__ */ h("h1", null, "Student", /* @__PURE__ */ h("span", null, ".")), /* @__PURE__ */ h("p", { className: "oa-description" }, "Do your homework on your computer"), /* @__PURE__ */ h("form", { className: "oa-form oa-student-form", onSubmit: (event) => {
       if (!ready) {
@@ -870,7 +918,7 @@ function createCampusLogin(runtime, React) {
         return;
       }
       onSubmit(event);
-    } }, /* @__PURE__ */ h("div", { className: "oa-phone-entry" }, /* @__PURE__ */ h("label", { className: "oa-country" }, /* @__PURE__ */ h(CountryFlag, { country }), /* @__PURE__ */ h("span", { className: "oa-dial-code" }, selected.code), /* @__PURE__ */ h("svg", { className: "oa-country-chevron", viewBox: "0 0 16 16", fill: "none", stroke: "currentColor", strokeWidth: "1.6", "aria-hidden": "true" }, /* @__PURE__ */ h("path", { d: "m4 6 4 4 4-4" })), /* @__PURE__ */ h("select", { "aria-label": "\u041A\u043E\u0434 \u0441\u0442\u0440\u0430\u043D\u044B", value: country, onChange: (event) => setCountry(event.target.value), disabled: busy }, phoneCountries.map((c) => /* @__PURE__ */ h("option", { key: c.id, value: c.id }, c.name, " (", c.code, ")")))), /* @__PURE__ */ h("label", { className: "oa-national-phone" }, /* @__PURE__ */ h("span", { className: "oa-sr-only" }, "\u041D\u043E\u043C\u0435\u0440 \u0442\u0435\u043B\u0435\u0444\u043E\u043D\u0430"), /* @__PURE__ */ h("input", { ref: inputRef, name: "nationalPhone", "aria-label": "\u041D\u043E\u043C\u0435\u0440 \u0442\u0435\u043B\u0435\u0444\u043E\u043D\u0430", type: "tel", inputMode: "tel", autoComplete: "tel-national", value: number, onChange: changePhone, placeholder: selected.placeholder, required: true, maxLength: "40", disabled: busy })), /* @__PURE__ */ h("input", { type: "hidden", name: "phone", value: phone })), /* @__PURE__ */ h("label", { className: "oa-student-password" }, /* @__PURE__ */ h("span", { className: "oa-sr-only" }, "\u041F\u0430\u0440\u043E\u043B\u044C"), /* @__PURE__ */ h("span", { className: "oa-password" }, /* @__PURE__ */ h(Icon, { name: "lock", className: "oa-password-lock" }), /* @__PURE__ */ h("input", { "aria-label": "\u041F\u0430\u0440\u043E\u043B\u044C", name: "password", type: visible ? "text" : "password", autoComplete: "current-password", value: password, onChange: (event) => setPassword(event.target.value), placeholder: "Password", required: true, maxLength: "200", disabled: busy }), /* @__PURE__ */ h("button", { type: "button", onClick: onVisible, disabled: busy, "aria-label": visible ? "\u0421\u043A\u0440\u044B\u0442\u044C \u043F\u0430\u0440\u043E\u043B\u044C" : "\u041F\u043E\u043A\u0430\u0437\u0430\u0442\u044C \u043F\u0430\u0440\u043E\u043B\u044C", "aria-pressed": visible }, /* @__PURE__ */ h("svg", { viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "1.6", "aria-hidden": "true" }, /* @__PURE__ */ h("path", { d: "M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12Z" }), /* @__PURE__ */ h("circle", { cx: "12", cy: "12", r: "3" }), visible && /* @__PURE__ */ h("path", { d: "m3 3 18 18" }))))), /* @__PURE__ */ h("button", { className: "oa-forgot", type: "button", onClick: () => setRecovery(!recovery), disabled: busy, "aria-expanded": recovery, "aria-controls": "oa-recovery" }, "Forgot password?"), recovery && /* @__PURE__ */ h("div", { id: "oa-recovery", className: "oa-recovery", role: "status" }, /* @__PURE__ */ h("b", null, "\u041F\u043E\u043C\u043E\u0436\u0435\u043C \u0432\u0435\u0440\u043D\u0443\u0442\u044C\u0441\u044F \u0432 ORBIT."), /* @__PURE__ */ h("p", null, "\u041E\u0431\u0440\u0430\u0442\u0438\u0441\u044C \u043A \u0430\u0434\u043C\u0438\u043D\u0438\u0441\u0442\u0440\u0430\u0446\u0438\u0438 \u0441\u0432\u043E\u0435\u0433\u043E \u0446\u0435\u043D\u0442\u0440\u0430 \u0438 \u0441\u043E\u043E\u0431\u0449\u0438 \u043D\u043E\u043C\u0435\u0440 \u0442\u0435\u043B\u0435\u0444\u043E\u043D\u0430, \u0443\u043A\u0430\u0437\u0430\u043D\u043D\u044B\u0439 \u043F\u0440\u0438 \u0440\u0435\u0433\u0438\u0441\u0442\u0440\u0430\u0446\u0438\u0438. \u0410\u0434\u043C\u0438\u043D\u0438\u0441\u0442\u0440\u0430\u0442\u043E\u0440 \u0432\u044B\u0434\u0430\u0441\u0442 \u043D\u043E\u0432\u044B\u0439 \u043F\u0430\u0440\u043E\u043B\u044C."), /* @__PURE__ */ h("p", null, "\u0421\u0430\u043C \u043F\u0430\u0440\u043E\u043B\u044C \u043D\u0438\u043A\u043E\u043C\u0443 \u043D\u0435 \u043E\u0442\u043F\u0440\u0430\u0432\u043B\u044F\u0439."), /* @__PURE__ */ h("button", { type: "button", onClick: () => setRecovery(false) }, "\u041F\u043E\u043D\u044F\u0442\u043D\u043E")), error && /* @__PURE__ */ h("p", { className: "oa-error", role: "alert" }, error), /* @__PURE__ */ h("button", { className: "oa-next", disabled: busy || !account || !ready }, busy ? "\u0412\u0445\u043E\u0434\u0438\u043C\u2026" : "Next", /* @__PURE__ */ h(Icon, { name: "arrow", size: 25 }))), /* @__PURE__ */ h("button", { type: "button", className: "oa-go-back", onClick: onBack, disabled: busy }, "Go back"));
+    } }, /* @__PURE__ */ h("div", { className: "oa-phone-entry" }, /* @__PURE__ */ h("label", { className: "oa-country" }, /* @__PURE__ */ h(CountryFlag, { country }), /* @__PURE__ */ h("span", { className: "oa-dial-code" }, selected.code), /* @__PURE__ */ h("svg", { className: "oa-country-chevron", viewBox: "0 0 16 16", fill: "none", stroke: "currentColor", strokeWidth: "1.6", "aria-hidden": "true" }, /* @__PURE__ */ h("path", { d: "m4 6 4 4 4-4" })), /* @__PURE__ */ h("select", { "aria-label": "\u041A\u043E\u0434 \u0441\u0442\u0440\u0430\u043D\u044B", value: country, onChange: (event) => setCountry(event.target.value), disabled: busy }, phoneCountries.map((c) => /* @__PURE__ */ h("option", { key: c.id, value: c.id }, c.name, " (", c.code, ")")))), /* @__PURE__ */ h("label", { className: "oa-national-phone" }, /* @__PURE__ */ h("span", { className: "oa-sr-only" }, "\u041D\u043E\u043C\u0435\u0440 \u0442\u0435\u043B\u0435\u0444\u043E\u043D\u0430"), /* @__PURE__ */ h("input", { ref: inputRef, name: "nationalPhone", "aria-label": "\u041D\u043E\u043C\u0435\u0440 \u0442\u0435\u043B\u0435\u0444\u043E\u043D\u0430", type: "tel", inputMode: "tel", autoComplete: "tel-national", value: formattedNumber, onChange: changePhone, onKeyDown: phoneKeyDown, placeholder: selected.placeholder, required: true, maxLength: "40", disabled: busy })), /* @__PURE__ */ h("input", { type: "hidden", name: "phone", value: phone })), /* @__PURE__ */ h("label", { className: "oa-student-password" }, /* @__PURE__ */ h("span", { className: "oa-sr-only" }, "\u041F\u0430\u0440\u043E\u043B\u044C"), /* @__PURE__ */ h("span", { className: "oa-password" }, /* @__PURE__ */ h(Icon, { name: "lock", className: "oa-password-lock" }), /* @__PURE__ */ h("input", { "aria-label": "\u041F\u0430\u0440\u043E\u043B\u044C", name: "password", type: visible ? "text" : "password", autoComplete: "current-password", value: password, onChange: (event) => setPassword(event.target.value), placeholder: "Password", required: true, maxLength: "200", disabled: busy }), /* @__PURE__ */ h("button", { type: "button", onClick: onVisible, disabled: busy, "aria-label": visible ? "\u0421\u043A\u0440\u044B\u0442\u044C \u043F\u0430\u0440\u043E\u043B\u044C" : "\u041F\u043E\u043A\u0430\u0437\u0430\u0442\u044C \u043F\u0430\u0440\u043E\u043B\u044C", "aria-pressed": visible }, /* @__PURE__ */ h("svg", { viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "1.6", "aria-hidden": "true" }, /* @__PURE__ */ h("path", { d: "M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12Z" }), /* @__PURE__ */ h("circle", { cx: "12", cy: "12", r: "3" }), visible && /* @__PURE__ */ h("path", { d: "m3 3 18 18" }))))), /* @__PURE__ */ h("button", { className: "oa-forgot", type: "button", onClick: () => setRecovery(!recovery), disabled: busy, "aria-expanded": recovery, "aria-controls": "oa-recovery" }, "Forgot password?"), recovery && /* @__PURE__ */ h("div", { id: "oa-recovery", className: "oa-recovery", role: "status" }, /* @__PURE__ */ h("b", null, "\u041F\u043E\u043C\u043E\u0436\u0435\u043C \u0432\u0435\u0440\u043D\u0443\u0442\u044C\u0441\u044F \u0432 ORBIT."), /* @__PURE__ */ h("p", null, "\u041E\u0431\u0440\u0430\u0442\u0438\u0441\u044C \u043A \u0430\u0434\u043C\u0438\u043D\u0438\u0441\u0442\u0440\u0430\u0446\u0438\u0438 \u0441\u0432\u043E\u0435\u0433\u043E \u0446\u0435\u043D\u0442\u0440\u0430 \u0438 \u0441\u043E\u043E\u0431\u0449\u0438 \u043D\u043E\u043C\u0435\u0440 \u0442\u0435\u043B\u0435\u0444\u043E\u043D\u0430, \u0443\u043A\u0430\u0437\u0430\u043D\u043D\u044B\u0439 \u043F\u0440\u0438 \u0440\u0435\u0433\u0438\u0441\u0442\u0440\u0430\u0446\u0438\u0438. \u0410\u0434\u043C\u0438\u043D\u0438\u0441\u0442\u0440\u0430\u0442\u043E\u0440 \u0432\u044B\u0434\u0430\u0441\u0442 \u043D\u043E\u0432\u044B\u0439 \u043F\u0430\u0440\u043E\u043B\u044C."), /* @__PURE__ */ h("p", null, "\u0421\u0430\u043C \u043F\u0430\u0440\u043E\u043B\u044C \u043D\u0438\u043A\u043E\u043C\u0443 \u043D\u0435 \u043E\u0442\u043F\u0440\u0430\u0432\u043B\u044F\u0439."), /* @__PURE__ */ h("button", { type: "button", onClick: () => setRecovery(false) }, "\u041F\u043E\u043D\u044F\u0442\u043D\u043E")), error && /* @__PURE__ */ h("p", { className: "oa-error", role: "alert" }, error), /* @__PURE__ */ h("button", { className: "oa-next", disabled: busy || !account || !ready }, busy ? "\u0412\u0445\u043E\u0434\u0438\u043C\u2026" : "Next", /* @__PURE__ */ h(Icon, { name: "arrow", size: 25 }))), /* @__PURE__ */ h("button", { type: "button", className: "oa-go-back", onClick: onBack, disabled: busy }, "Go back"));
   }
   return function CampusLogin({ account }) {
     const [portal, setPortal] = useState(""), [step, setStep] = useState("profile"), [busy, setBusy] = useState(false), [error, setError] = useState(""), [visible, setVisible] = useState(false);
