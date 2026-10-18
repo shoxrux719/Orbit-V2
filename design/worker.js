@@ -1,6 +1,7 @@
 import site from './index.js';
 import { schoolUser, handleSchool, learningRequest } from './school-server.js';
 import { handleCampus } from './campus-server.js';
+import { handleAcademy } from './academy-server.js';
 const revision='__ORBIT_ASSET_VERSION__';
 const styles=['design','learning','school','campus'].map(name=>`<link rel="stylesheet" href="/orbit-${name}-${revision}.css">`).join('');
 
@@ -9,6 +10,8 @@ export default {
     let user;
     try { user = await schoolUser(request,env); }
     catch { return Response.json({error:'Учебная база недоступна. Повторите попытку.'},{status:503}); }
+    const academyResponse = await handleAcademy(request,env,user);
+    if(academyResponse) return academyResponse;
     const campusResponse = await handleCampus(request,env,user);
     if(campusResponse) return campusResponse;
     const schoolResponse = await handleSchool(request,env,user);

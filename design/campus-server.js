@@ -1,5 +1,6 @@
 import {practiceBank} from './practice-bank.js';
 import {chatReactions,chatStickers} from './chat-data.js';
+import {academyMetrics,academyRanking} from './academy-server.js';
 const response=(data,status=200)=>Response.json(data,{status,headers:{'Cache-Control':'no-store'}});
 const all=async(env,sql,...args)=>(await env.DB.prepare(sql).bind(...args).all()).results;
 const run=(env,sql,...args)=>env.DB.prepare(sql).bind(...args).run();
@@ -12,17 +13,7 @@ const person=p=>({id:p.id,firstName:p.first_name,lastName:p.last_name,gender:p.g
 const admin=u=>{if(u.role!=='admin')fail(403,'Только для администрации.');};
 async function groupAccess(env,u,groupId){const g=await env.DB.prepare('SELECT * FROM school_groups WHERE id=?').bind(groupId).first();if(!g)fail(404,'Группа не найдена.');if(u.role==='admin'||(u.role==='teacher'&&g.teacher_id===u.id))return g;if(u.role==='student'&&await env.DB.prepare('SELECT 1 FROM school_members WHERE group_id=? AND student_id=?').bind(groupId,u.id).first())return g;fail(403,'Нет доступа к группе.');}
 export async function metrics(env,userId){
- const [units,works,marks,games,spent]=await Promise.all([
- all(env,'SELECT kind,item_id,MAX(1.0*score/total) AS accuracy FROM sessions WHERE user_id=? GROUP BY kind,item_id',userId),
- all(env,"SELECT a.id,a.skill,s.score FROM school_submissions s JOIN school_assignments a ON a.id=s.assignment_id WHERE s.student_id=? AND s.status='reviewed'",userId),
- all(env,'SELECT skill,AVG(score) AS accuracy FROM school_marks WHERE student_id=? GROUP BY skill',userId),
- all(env,'SELECT mode,MAX(score*1.0/total) AS accuracy FROM campus_attempts WHERE user_id=? AND score IS NOT NULL GROUP BY mode',userId),
- env.DB.prepare("SELECT COALESCE(SUM(cost),0) AS spent FROM campus_orders WHERE user_id=? AND status!='cancelled'").bind(userId).first()
- ]);
- const xp=units.reduce((n,r)=>n+Math.round(r.accuracy*100),0)+works.reduce((n,r)=>n+r.score,0)+games.reduce((n,r)=>n+Math.round(r.accuracy*100),0);
- const earned=units.reduce((n,r)=>n+Math.round(r.accuracy*20),0)+works.reduce((n,r)=>n+Math.round(r.score/5),0)+games.reduce((n,r)=>n+Math.round(r.accuracy*20),0);
- const skills=Object.fromEntries(['vocabulary','grammar','listening','writing','reading','speaking'].map(skill=>{const values=[...units.filter(r=>r.kind===skill).map(r=>r.accuracy*100),...works.filter(r=>r.skill===skill).map(r=>r.score),...marks.filter(r=>r.skill===skill).map(r=>r.accuracy)];return [skill,values.length?Math.round(values.reduce((a,b)=>a+b,0)/values.length):null];}));
- return {xp,earned,coins:Math.max(0,earned-(spent?.spent||0)),skills,average:works.length?Math.round(works.reduce((n,r)=>n+r.score,0)/works.length):null,completed:units.length};
+ return academyMetrics(env,userId);
 }
 export async function handleCampus(request,env,user){
  const url=new URL(request.url),path=url.pathname;if(!path.startsWith('/api/campus/'))return null;
@@ -41,20 +32,7 @@ export async function handleCampus(request,env,user){
   }
   if(path==='/api/campus/ranking'&&request.method==='GET'){
    const scope=one(url.searchParams.get('scope')||'school',['school','group']),level=url.searchParams.get('level')||'';if(level)one(level,['A1','A2','B1','B2','C1','C2']);const groupId=scope==='group'?(await groupAccess(env,user,url.searchParams.get('groupId'))).id:null;
-   // Aggregate once for the whole centre instead of issuing five queries per student.
-   const ranking=await all(env,`WITH practice_best AS (SELECT user_id,kind,item_id,MAX(1.0*score/total) AS accuracy FROM sessions GROUP BY user_id,kind,item_id),
-    practice_totals AS (SELECT user_id,SUM(ROUND(accuracy*100)) AS xp,SUM(ROUND(accuracy*20)) AS earned,COUNT(*) AS completed FROM practice_best GROUP BY user_id),
-    work_totals AS (SELECT student_id AS user_id,SUM(score) AS xp,SUM(ROUND(score/5.0)) AS earned,ROUND(AVG(score)) AS average FROM school_submissions WHERE status='reviewed' GROUP BY student_id),
-    game_best AS (SELECT user_id,mode,MAX(1.0*score/total) AS accuracy FROM campus_attempts WHERE score IS NOT NULL GROUP BY user_id,mode),
-    game_totals AS (SELECT user_id,SUM(ROUND(accuracy*100)) AS xp,SUM(ROUND(accuracy*20)) AS earned FROM game_best GROUP BY user_id),
-    spent AS (SELECT user_id,SUM(cost) AS amount FROM campus_orders WHERE status!='cancelled' GROUP BY user_id)
-    SELECT u.*,COALESCE(p.xp,0)+COALESCE(w.xp,0)+COALESCE(g.xp,0) AS xp,
-    MAX(0,COALESCE(p.earned,0)+COALESCE(w.earned,0)+COALESCE(g.earned,0)-COALESCE(s.amount,0)) AS coins,
-    COALESCE(p.completed,0) AS completed,w.average
-    FROM school_users u LEFT JOIN practice_totals p ON p.user_id=u.id LEFT JOIN work_totals w ON w.user_id=u.id LEFT JOIN game_totals g ON g.user_id=u.id LEFT JOIN spent s ON s.user_id=u.id
-    WHERE u.role='student' AND u.active=1 ${level?'AND u.level=?':''} ${groupId?'AND EXISTS(SELECT 1 FROM school_members m WHERE m.student_id=u.id AND m.group_id=?)':''}
-    ORDER BY xp DESC,u.number LIMIT 1000`,...(level?[level]:[]),...(groupId?[groupId]:[]));
-   return response({ranking:ranking.map((p,i)=>({...person(p),xp:p.xp,coins:p.coins,completed:p.completed,average:p.average,rank:i+1})),self:await metrics(env,user.id)});
+   return response({ranking:await academyRanking(env,{level,groupId}),self:await metrics(env,user.id)});
   }
   if(path==='/api/campus/marks'&&request.method==='GET'){
    const group=await groupAccess(env,user,url.searchParams.get('groupId')),month=str(url.searchParams.get('month'),7);if(!/^\d{4}-\d{2}$/.test(month))fail(400,'Укажите месяц.');

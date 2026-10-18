@@ -14,7 +14,7 @@ class Statement {
  async run(){const result=database.prepare(this.sql).run(...this.args);return {meta:{changes:Number(result.changes)}};}
 }
 beforeEach(async()=>{
- database=new DatabaseSync(':memory:');database.exec(fs.readFileSync('design/school-schema.sql','utf8'));database.exec(fs.readFileSync('design/student-phone.sql','utf8'));
+ database=new DatabaseSync(':memory:');database.exec(fs.readFileSync('design/school-schema.sql','utf8'));database.exec(fs.readFileSync('design/student-phone.sql','utf8'));database.exec(fs.readFileSync('design/navigate-schema.sql','utf8'));
  database.exec(fs.readFileSync('publish-stage-20260920-1500/dist/.openai/drizzle/0000_special_bug.sql','utf8'));
  env={DB:{prepare:sql=>new Statement(sql),batch:async statements=>{database.exec('BEGIN');try{const results=[];for(const s of statements)results.push(await s.run());database.exec('COMMIT');return results;}catch(e){database.exec('ROLLBACK');throw e;}}}};
  const hash=await hashPassword(pass);
@@ -136,42 +136,35 @@ test('only administrators assign groups; journal access and bulk writes respect 
  assert.equal((await request(path,{rows:[{studentId:'student',status:'present'},{studentId:'student2',status:'present'}]},t)).status,400);
  assert.equal(database.prepare('SELECT count(*) AS n FROM school_attendance').get().n,0);
  assert.equal((await request(path,{rows:[{studentId:'student',status:'late'}]},t)).status,200);
- assert.equal((await request(`/api/school/lessons/${lesson.data.id}/marks`,{rows:[{studentId:'student',skill:'reading',score:0,comment:'Try again'}]},t)).status,200);
- assert.equal((await request(`/api/school/lessons/${lesson.data.id}/marks`,{rows:[{studentId:'student',skill:'reading',score:101}]},t)).status,400);
+ assert.equal((await request(`/api/school/lessons/${lesson.data.id}/marks`,{rows:[{studentId:'student',skill:'reading',score:0,comment:'Try again'}]},t)).status,403);
+ assert.equal((await request(`/api/school/lessons/${lesson.data.id}/marks`,{rows:[{studentId:'student',skill:'reading',score:101}]},t)).status,403);
+ database.prepare('INSERT INTO school_marks VALUES(?,?,?,?,?,?,?)').run(lesson.data.id,'student','reading',0,'Historical','teacher',Date.now());
  const data=(await request(`/api/school/groups/${id}`,undefined,s)).data;assert.equal(data.attendance[0].status,'late');assert.equal(data.marks[0].score,0);
  assert.equal((await request(path,{rows:[{studentId:'student',status:'unmarked'}]},t)).status,200);
  assert.equal((await request(`/api/school/groups/${id}`,undefined,s)).data.attendance.length,0);
 });
-test('student sees only their grades and work, not classmates private submissions',async()=>{
- const a=await login('admin'),t=await login('teacher'),s=await login('student'),s2=await login('student2');const id=await group(a,'teacher',['student','student2']);
+test('student sees only their historical grades and work, not classmates private submissions',async()=>{
+ const a=await login('admin'),t=await login('teacher'),s=await login('student');const id=await group(a,'teacher',['student','student2']);
  const lesson=(await request('/api/school/lessons',{groupId:id,date:'2026-10-05',title:'Class'},t)).data.id;
- await request(`/api/school/lessons/${lesson}/marks`,{rows:[{studentId:'student',skill:'general',score:75},{studentId:'student2',skill:'general',score:90}]},t);
- const assignment=(await request('/api/school/assignments',{groupId:id,title:'Homework',instructions:'Write',checklist:['Write'],skill:'writing',dueAt:'2026-10-06'},t)).data.id;
- await request(`/api/school/assignments/${assignment}/submit`,{answer:'Private answer 2',completed:[0],status:'submitted'},s2);
- const data=(await request(`/api/school/groups/${id}`,undefined,s)).data;assert.equal(data.marks.length,1);assert.equal(data.marks[0].student_id,'student');assert.equal(data.submissions.length,0);
- assert.equal((await request(`/api/school/groups/${id}`,undefined,t)).data.submissions[0].answer,'Private answer 2');
+ for(const who of ['student','student2'])database.prepare('INSERT INTO school_marks VALUES(?,?,?,?,?,?,?)').run(lesson,who,'general',75,'Historical','teacher',Date.now());
+ database.prepare('INSERT INTO school_assignments VALUES(?,?,?,?,?,?,?,?,?)').run('history',id,'Old homework','Write','["Write"]','writing','2026-10-06','teacher',Date.now());
+ database.prepare('INSERT INTO school_submissions(assignment_id,student_id,answer,completed,status,updated_at) VALUES(?,?,?,?,?,?)').run('history','student2','Private answer 2','[0]','submitted',Date.now());
+ const data=(await request('/api/school/groups/'+id,undefined,s)).data;assert.equal(data.marks.length,1);assert.equal(data.marks[0].student_id,'student');assert.equal(data.submissions.length,0);
+ assert.equal((await request('/api/school/groups/'+id,undefined,t)).data.submissions[0].answer,'Private answer 2');
 });
-test('homework persists drafts, requires completed steps, supports review and return',async()=>{
- const a=await login('admin'),t=await login('teacher'),t2=await login('teacher2'),s=await login('student'),s2=await login('student2');const id=await group(a);
- const created=await request('/api/school/assignments',{groupId:id,title:'My story',instructions:'Tell your story',checklist:['Read','Write'],skill:'writing',dueAt:'2026-10-06'},t);assert.equal(created.status,201);const assignment=created.data.id,path=`/api/school/assignments/${assignment}/submit`,review=`/api/school/assignments/${assignment}/review`;
- assert.equal((await request(path,{answer:'Work in progress',completed:[0],status:'draft'},s)).status,200);
- assert.equal((await request(`/api/school/groups/${id}`,undefined,s)).data.submissions[0].completed.length,1);
- assert.equal((await request(path,{answer:'Text',completed:[0],status:'submitted'},s)).status,400);
- assert.equal((await request(path,{answer:'Text',completed:[0,0],status:'draft'},s)).status,400);
- assert.equal((await request(path,{answer:'Other',completed:[0,1],status:'submitted'},s2)).status,403);
- assert.equal((await request(review,{studentId:'student',status:'reviewed',score:100},t)).status,409);
- assert.equal((await request(path,{answer:'My finished story',completed:[0,1],status:'submitted'},s)).status,200);
- assert.equal((await request(review,{studentId:'student',status:'reviewed',score:80},t2)).status,403);
- assert.equal((await request(review,{studentId:'student',status:'reviewed',score:80,feedback:'Well done'},t)).status,200);
- assert.equal((await request(path,{answer:'Replace graded answer',completed:[0,1],status:'draft'},s)).status,409);
- assert.equal((await request(review,{studentId:'student',status:'returned'},t)).status,400);
- assert.equal((await request(review,{studentId:'student',status:'returned',feedback:'Add examples'},t)).status,200);
- assert.equal((await request(path,{answer:'Improved story with examples',completed:[0,1],status:'submitted'},s)).status,200);
- const row=database.prepare('SELECT * FROM school_submissions').get();assert.equal(row.score,null);assert.equal(row.status,'submitted');assert.equal(row.feedback,'');
+
+test('manual grades and legacy homework writes are retired without deleting history',async()=>{
+ const a=await login('admin'),t=await login('teacher'),s=await login('student');const id=await group(a);
+ const lesson=(await request('/api/school/lessons',{groupId:id,date:'2026-10-05',title:'Class'},t)).data.id;
+ assert.equal((await request('/api/school/lessons/'+lesson+'/marks',{rows:[{studentId:'student',skill:'general',score:100}]},t)).status,403);
+ assert.equal((await request('/api/school/assignments',{groupId:id,title:'Legacy'},t)).status,403);
+ assert.equal((await request('/api/school/assignments/history/submit',{answer:'Text'},s)).status,403);
+ assert.equal((await request('/api/school/assignments/history/review',{score:100},t)).status,403);
 });
+
 test('profile privacy, media ownership, skill assessments and identity cannot be spoofed',async()=>{
  const a=await login('admin'),t=await login('teacher'),t2=await login('teacher2'),s=await login('student'),s2=await login('student2');await group(a);
- const updated=await request('/api/account',{firstName:'Alex',lastName:'Learner',gender:'female',bio:'English enthusiast',level:'B1',phone:'private-phone',bannerStyle:'violet',role:'admin'},s);assert.equal(updated.status,200);assert.equal(database.prepare('SELECT role FROM school_users WHERE id=?').get('student').role,'student');
+ const updated=await request('/api/account',{firstName:'Alex',lastName:'Learner',gender:'female',bio:'English enthusiast',level:'A1',phone:'private-phone',bannerStyle:'violet',role:'admin'},s);assert.equal(updated.status,200);assert.equal(database.prepare('SELECT role FROM school_users WHERE id=?').get('student').role,'student');
  const publicProfile=(await request('/api/school/people/student',undefined,s2)).data;assert.equal(publicProfile.person.firstName,'Alex');assert.equal(publicProfile.person.phone,undefined);assert.equal(publicProfile.person.login,undefined);assert.equal(publicProfile.person.password_hash,undefined);
  assert.equal((await request('/api/school/skills',{studentId:'student',skill:'speaking',level:'B1'},s)).status,403);
  assert.equal((await request('/api/school/skills',{studentId:'student',skill:'speaking',level:'B1'},t2)).status,403);

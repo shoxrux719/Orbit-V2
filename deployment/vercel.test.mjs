@@ -13,7 +13,7 @@ const password='Private-test-password-2026';
 
 test('production migrations and administrator setup are idempotent and preserve data',async()=>{
  const client=createClient({url:'file::memory:'});try{
-  assert.equal((await applyMigrations(client,migrationDir)).length,8);
+  assert.equal((await applyMigrations(client,migrationDir)).length,10);
   await assert.rejects(ensureAdministrator(client),/ORBIT_ADMIN/);
   assert.equal((await ensureAdministrator(client,{password})).created,true);
   const before=(await client.execute("SELECT * FROM school_users WHERE role='admin'")).rows[0];

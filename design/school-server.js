@@ -14,7 +14,7 @@ export async function hashPassword(password, salt=token().slice(0,32)) {
  const bits=await crypto.subtle.deriveBits({name:'PBKDF2',salt:encoder.encode(salt),iterations:100000,hash:'SHA-256'},key,256);
  return `pbkdf2:100000:${salt}:${[...new Uint8Array(bits)].map(n=>n.toString(16).padStart(2,'0')).join('')}`;
 }
-async function verifyPassword(password, expected) {
+export async function verifyPassword(password, expected) {
  const parts=expected.split(':'); if(parts.length!==4||parts[0]!=='pbkdf2'||parts[1]!=='100000')return false;
  const actual=await hashPassword(password,parts[2]); let diff=actual.length^expected.length;
  for(let i=0;i<actual.length;i++)diff|=actual.charCodeAt(i)^(expected.charCodeAt(i)||0); return diff===0;
@@ -74,6 +74,7 @@ export async function handleSchool(request,env,user) {
    if(request.method==='GET')return json(account(user));
    if(request.method!=='POST')fail(405,'Метод не поддерживается.');requireUser(user); const b=await body(request);
    const first=text(b.firstName,60,true),last=text(b.lastName,60),gender=choice(b.gender,['male','female','unspecified']),level=choice(b.level,levels),style=choice(b.bannerStyle,['blue','violet','mint','sunset']);
+   if(user.role==='student'&&level!==user.level)fail(403,'Уровень программы назначает администрация.');
    await run(env,'UPDATE school_users SET first_name=?,last_name=?,gender=?,bio=?,level=?,phone=?,banner_style=? WHERE id=?',first,last,gender,text(b.bio,600),level,text(b.phone,40),style,user.id);
    return json({ok:true});
   }
@@ -109,9 +110,10 @@ export async function handleSchool(request,env,user) {
    await run(env,'INSERT INTO school_users(id,number,login,password_hash,role,first_name,last_name,gender,level,phone,login_phone,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',id,number,login,await hashPassword(password),role,text(b.firstName,60,true),text(b.lastName||'',60),choice(b.gender||'unspecified',['male','female','unspecified']),choice(b.level||'A1',levels),phone,role==='student'?phone:null,Date.now());
    await audit(env,user,'Аккаунт создан',`${role==='teacher'?'Учитель':'Ученик'}: ${login}`);return json({id,number,login,phone:role==='student'?phone:null,password,role},201);
   }
-  const userAction=path.match(/^\/api\/school\/users\/([^/]+)\/(reset|status|phone)$/);
+  const userAction=path.match(/^\/api\/school\/users\/([^/]+)\/(reset|status|phone|level)$/);
   if(userAction&&request.method==='POST') {
    requireAdmin(user);const target=await env.DB.prepare('SELECT * FROM school_users WHERE id=?').bind(userAction[1]).first();if(!target)fail(404,'Аккаунт не найден.');const b=await body(request);
+   if(userAction[2]==='level'){if(target.role!=='student')fail(400,'Выберите ученика.');await run(env,'UPDATE school_users SET level=? WHERE id=?',choice(b.level,levels),target.id);await audit(env,user,'Уровень программы изменён',target.number+' · '+b.level);return json({ok:true});}
    if(userAction[2]==='phone'){
     if(target.role!=='student')fail(400,'Номер для входа назначается только ученикам.');
     const phone=normalizePhone(b.phone);
@@ -144,23 +146,15 @@ export async function handleSchool(request,env,user) {
   if(path==='/api/school/lessons'&&request.method==='POST') {const b=await body(request);await groupFor(env,user,b.groupId,true);const id=crypto.randomUUID();await run(env,'INSERT INTO school_lessons VALUES(?,?,?,?,?,?)',id,b.groupId,validDate(b.date),text(b.title,160,true),user.id,Date.now());return json({id},201);}
   const lessonMatch=path.match(/^\/api\/school\/lessons\/([^/]+)\/(attendance|marks)$/);
   if(lessonMatch&&request.method==='POST') {
+   if(lessonMatch[2]==='marks')fail(403,'Оценки рассчитываются автоматически по домашним заданиям Navigate.');
    const lesson=await env.DB.prepare('SELECT * FROM school_lessons WHERE id=?').bind(lessonMatch[1]).first();if(!lesson)fail(404,'Занятие не найдено.');await groupFor(env,user,lesson.group_id,true);const b=await body(request);
    if(!Array.isArray(b.rows)||b.rows.length>200)fail(400,'Некорректный журнал.');const statements=[];
-   for(const row of b.rows){await member(env,lesson.group_id,row.studentId);if(lessonMatch[2]==='attendance'){if(row.status==='unmarked')statements.push(env.DB.prepare('DELETE FROM school_attendance WHERE lesson_id=? AND student_id=?').bind(lesson.id,row.studentId));else statements.push(env.DB.prepare('INSERT INTO school_attendance VALUES(?,?,?,?,?,?) ON CONFLICT(lesson_id,student_id) DO UPDATE SET status=excluded.status,note=excluded.note,updated_by=excluded.updated_by,updated_at=excluded.updated_at').bind(lesson.id,row.studentId,choice(row.status,['present','absent','late','excused']),text(row.note||'',300),user.id,Date.now()));}else statements.push(env.DB.prepare('INSERT INTO school_marks VALUES(?,?,?,?,?,?,?) ON CONFLICT(lesson_id,student_id,skill) DO UPDATE SET score=excluded.score,comment=excluded.comment,updated_by=excluded.updated_by,updated_at=excluded.updated_at').bind(lesson.id,row.studentId,choice(row.skill,['general',...skills]),validScore(row.score),text(row.comment||'',600),user.id,Date.now()));}
+   for(const row of b.rows){await member(env,lesson.group_id,row.studentId);if(row.status==='unmarked')statements.push(env.DB.prepare('DELETE FROM school_attendance WHERE lesson_id=? AND student_id=?').bind(lesson.id,row.studentId));else statements.push(env.DB.prepare('INSERT INTO school_attendance VALUES(?,?,?,?,?,?) ON CONFLICT(lesson_id,student_id) DO UPDATE SET status=excluded.status,note=excluded.note,updated_by=excluded.updated_by,updated_at=excluded.updated_at').bind(lesson.id,row.studentId,choice(row.status,['present','absent','late','excused']),text(row.note||'',300),user.id,Date.now()));}
    if(statements.length)await env.DB.batch(statements);return json({ok:true});
   }
-  if(path==='/api/school/assignments'&&request.method==='POST') {const b=await body(request);await groupFor(env,user,b.groupId,true);if(!Array.isArray(b.checklist)||b.checklist.length<1||b.checklist.length>20)fail(400,'Добавьте от 1 до 20 шагов задания.');const checklist=b.checklist.map(x=>text(x,200,true));const id=crypto.randomUUID();await run(env,'INSERT INTO school_assignments VALUES(?,?,?,?,?,?,?,?,?)',id,b.groupId,text(b.title,160,true),text(b.instructions,6000,true),JSON.stringify(checklist),choice(b.skill,['general',...skills]),validDate(b.dueAt),user.id,Date.now());return json({id},201);}
+  if(path==='/api/school/assignments'&&request.method==='POST')fail(403,'Назначайте опубликованные юниты программы Navigate.');
   const submitMatch=path.match(/^\/api\/school\/assignments\/([^/]+)\/(submit|review)$/);
-  if(submitMatch&&request.method==='POST') {
-   const a=await env.DB.prepare('SELECT * FROM school_assignments WHERE id=?').bind(submitMatch[1]).first();if(!a)fail(404,'Задание не найдено.');const b=await body(request);
-   if(submitMatch[2]==='submit') {
-    if(user.role!=='student')fail(403,'Работу отправляет ученик.');await groupFor(env,user,a.group_id);await member(env,a.group_id,user.id);
-    const previous=await env.DB.prepare('SELECT status FROM school_submissions WHERE assignment_id=? AND student_id=?').bind(a.id,user.id).first();if(previous&&['submitted','reviewed'].includes(previous.status))fail(409,'Работа уже отправлена. Изменить её можно после возврата учителем.');
-    const checklist=JSON.parse(a.checklist);if(!Array.isArray(b.completed)||b.completed.length>checklist.length||new Set(b.completed).size!==b.completed.length||b.completed.some(n=>!Number.isInteger(n)||n<0||n>=checklist.length))fail(400,'Некорректные шаги задания.');const answer=text(b.answer,12000),status=choice(b.status,['draft','submitted']);if(status==='submitted'&&(!answer||b.completed.length!==checklist.length))fail(400,'Выполните все шаги и добавьте ответ перед отправкой.');
-    await run(env,'INSERT INTO school_submissions(assignment_id,student_id,answer,completed,status,submitted_at,updated_at) VALUES(?,?,?,?,?,?,?) ON CONFLICT(assignment_id,student_id) DO UPDATE SET answer=excluded.answer,completed=excluded.completed,status=excluded.status,score=NULL,feedback=\'\',submitted_at=excluded.submitted_at,reviewed_by=NULL,updated_at=excluded.updated_at',a.id,user.id,answer,JSON.stringify(b.completed),status,status==='submitted'?Date.now():null,Date.now());return json({ok:true});
-   }
-   await groupFor(env,user,a.group_id,true);await member(env,a.group_id,b.studentId);const previous=await env.DB.prepare('SELECT status FROM school_submissions WHERE assignment_id=? AND student_id=?').bind(a.id,b.studentId).first();if(!previous||!['submitted','reviewed'].includes(previous.status))fail(409,'Ученик ещё не отправил работу.');const status=choice(b.status,['reviewed','returned']),feedback=text(b.feedback||'',2000);if(status==='returned'&&!feedback)fail(400,'Объясните, что нужно доработать.');await run(env,'UPDATE school_submissions SET status=?,score=?,feedback=?,reviewed_by=?,updated_at=? WHERE assignment_id=? AND student_id=?',status,status==='reviewed'?validScore(b.score):null,feedback,user.id,Date.now(),a.id,b.studentId);return json({ok:true});
-  }
+  if(submitMatch&&request.method==='POST')fail(403,'Старые задания доступны в истории. Новые задания выполняются в Navigate.');
   if(path==='/api/school/skills'&&request.method==='POST') {const b=await body(request);requireUser(user);if(user.role==='student')fail(403,'Уровень навыка подтверждает учитель.');if(!await env.DB.prepare("SELECT 1 FROM school_users WHERE id=? AND role='student' AND active=1").bind(b.studentId).first())fail(404,'Ученик не найден.');if(user.role==='teacher'&&!await env.DB.prepare('SELECT 1 FROM school_members m JOIN school_groups g ON g.id=m.group_id WHERE m.student_id=? AND g.teacher_id=?').bind(b.studentId,user.id).first())fail(403,'Это ученик другого учителя.');await run(env,'INSERT INTO school_skill_levels VALUES(?,?,?,?,?) ON CONFLICT(user_id,skill) DO UPDATE SET level=excluded.level,assessed_by=excluded.assessed_by,updated_at=excluded.updated_at',b.studentId,choice(b.skill,skills),choice(b.level,levels),user.id,Date.now());return json({ok:true});}
   if(path==='/api/school/people'&&request.method==='GET')return json({people:(await all(env,`SELECT ${pub} FROM school_users WHERE active=1 ORDER BY role,last_name,first_name`)).map(person)});
   const profileMatch=path.match(/^\/api\/school\/people\/([^/]+)$/);
@@ -168,8 +162,8 @@ export async function handleSchool(request,env,user) {
    const target=await env.DB.prepare(`SELECT ${pub} FROM school_users WHERE id=? AND active=1`).bind(profileMatch[1]).first();if(!target)fail(404,'Профиль не найден.');
    const assessed=await all(env,'SELECT skill,level,updated_at FROM school_skill_levels WHERE user_id=?',target.id);
    const practice=await all(env,'SELECT kind,COUNT(*) AS count,ROUND(100.0*SUM(score)/SUM(total)) AS accuracy FROM sessions WHERE user_id=? GROUP BY kind',target.id);
-   const totals=await env.DB.prepare("SELECT (SELECT count(*) FROM sessions WHERE user_id=?) AS practice,(SELECT count(*) FROM school_submissions WHERE student_id=? AND status='reviewed') AS homework,(SELECT count(*) FROM school_attendance WHERE student_id=? AND status IN ('present','late')) AS attended").bind(target.id,target.id,target.id).first();
-   const achievements=[];if(totals.practice)achievements.push({name:'Первый шаг',detail:'Первое сохранённое упражнение',icon:'↗'});if(totals.practice>=10)achievements.push({name:'В своём ритме',detail:'10 упражнений завершено',icon:'✦'});if(totals.homework)achievements.push({name:'Работа принята',detail:'Первое проверенное домашнее задание',icon:'✓'});if(totals.homework>=5)achievements.push({name:'Держу темп',detail:'5 домашних заданий проверено',icon:'◈'});if(totals.attended>=10)achievements.push({name:'В центре событий',detail:'10 занятий посещено',icon:'◎'});
+   const totals=await env.DB.prepare("SELECT (SELECT count(*) FROM sessions WHERE user_id=?) AS practice,((SELECT count(*) FROM school_submissions WHERE student_id=? AND status='reviewed')+(SELECT count(*) FROM navigate_scores WHERE student_id=? AND kind='homework' AND percent=100)) AS homework,(SELECT count(*) FROM school_attendance WHERE student_id=? AND status IN ('present','late')) AS attended").bind(target.id,target.id,target.id,target.id).first();
+   const achievements=[];if(totals.practice)achievements.push({name:'Первый шаг',detail:'Первое сохранённое упражнение',icon:'↗'});if(totals.practice>=10)achievements.push({name:'В своём ритме',detail:'10 упражнений завершено',icon:'✦'});if(totals.homework)achievements.push({name:'Домашка на 100%',detail:'Первое завершённое домашнее задание',icon:'✓'});if(totals.homework>=5)achievements.push({name:'Держу темп',detail:'5 домашних заданий завершено',icon:'◈'});if(totals.attended>=10)achievements.push({name:'В центре событий',detail:'10 занятий посещено',icon:'◎'});
    const canAssess=target.role==='student'&&(user.role==='admin'||(user.role==='teacher'&&!!await env.DB.prepare('SELECT 1 FROM school_members m JOIN school_groups g ON g.id=m.group_id WHERE m.student_id=? AND g.teacher_id=?').bind(target.id,user.id).first()));
    return json({person:person(target),assessed,practice,totals,achievements,canAssess});
   }
