@@ -31,6 +31,7 @@ fs.writeFileSync(path.join(out,'config.json'),JSON.stringify({version:3,routes:[
  {src:'/_next/static/chunks/(?:orbit-design|page-orbit|index-orbit)-[a-f0-9]{12}\\.js',headers:{'Cache-Control':'public, max-age=31536000, immutable'},continue:true},
  {src:'/_next/static/chunks/(?:orbit-design|page-wtzQnJwQ|page-orbit-20261004|index-C2LGDuAU(?:-orbit)?)\\.js',headers:{'Cache-Control':'no-store'},continue:true},
  {src:'/(?:orbit-[a-z-]+|listening-hero|homework-sprite)-[a-f0-9]{12}\\.(?:css|webp)',headers:{'Cache-Control':'public, max-age=31536000, immutable'},continue:true},
+ {src:'/orbit-lessons/(.*)',headers:{'Cache-Control':'public, max-age=31536000, immutable'},continue:true},
  {src:'/orbit-(?:design|learning|school|campus)\\.css',headers:{'Cache-Control':'no-store'},continue:true},
  {handle:'filesystem'},{src:'/(.*)',dest:'/orbit'}]},null,2));
 console.log('Vercel output ready: static assets, SSR and API function. No local credentials or database copied.');

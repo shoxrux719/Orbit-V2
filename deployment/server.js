@@ -7,7 +7,7 @@ import {withEnvironment} from './runtime-env.js';
 
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const assetRoot=path.join(root,'assets');
-const mime={'.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.svg':'image/svg+xml','.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg','.webp':'image/webp','.ico':'image/x-icon','.json':'application/json; charset=utf-8','.txt':'text/plain; charset=utf-8','.woff':'font/woff','.woff2':'font/woff2'};
+const mime={'.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.svg':'image/svg+xml','.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg','.webp':'image/webp','.ico':'image/x-icon','.json':'application/json; charset=utf-8','.txt':'text/plain; charset=utf-8','.woff':'font/woff','.woff2':'font/woff2','.mp4':'video/mp4','.m4a':'audio/mp4','.vtt':'text/vtt; charset=utf-8'};
 let manifest;
 async function assets(request){
  if(!['GET','HEAD'].includes(request.method))return new Response(null,{status:405});
@@ -15,7 +15,19 @@ async function assets(request){
  let name;try{name=decodeURIComponent(new URL(request.url).pathname);}catch{return new Response(null,{status:400});}
  if(!manifest.has(name))return new Response(null,{status:404});
  const data=await readFile(path.join(assetRoot,name.slice(1)));
- return new Response(request.method==='HEAD'?null:data,{headers:{'Content-Type':mime[path.extname(name)]||'application/octet-stream','Cache-Control':/\.(js|css|json)$/.test(name)?'no-store':'public, max-age=3600','X-Content-Type-Options':'nosniff'}});
+ const media=name.startsWith('/orbit-lessons/'),headers={'Content-Type':mime[path.extname(name)]||'application/octet-stream','Cache-Control':media?'public, max-age=31536000, immutable':/\.(js|css|json)$/.test(name)?'no-store':'public, max-age=3600','X-Content-Type-Options':'nosniff','Content-Length':String(data.length)};
+ if(media){
+  headers['Accept-Ranges']='bytes';const range=request.headers.get('range');
+  if(range&&request.method==='GET'){
+   const match=/^bytes=(\d*)-(\d*)$/.exec(range);let start=0,end=data.length-1;
+   if(match&&(match[1]||match[2])){if(match[1]){start=Number(match[1]);if(match[2])end=Number(match[2]);}else start=Math.max(0,data.length-Number(match[2]));}
+   else return new Response(null,{status:416,headers:{...headers,'Content-Length':'0','Content-Range':`bytes */${data.length}`}});
+   if(!Number.isSafeInteger(start)||!Number.isSafeInteger(end)||start>=data.length||start>end)return new Response(null,{status:416,headers:{...headers,'Content-Length':'0','Content-Range':`bytes */${data.length}`}});
+   end=Math.min(end,data.length-1);headers['Content-Range']=`bytes ${start}-${end}/${data.length}`;headers['Content-Length']=String(end-start+1);
+   return new Response(data.subarray(start,end+1),{status:206,headers});
+  }
+ }
+ return new Response(request.method==='HEAD'?null:data,{headers});
 }
 function configurationError(){return Response.json({error:'Онлайн-база ORBIT ещё не подключена. Администрации нужно настроить базу данных для этого сайта.'},{status:503,headers:{'Cache-Control':'no-store','Retry-After':'60'}});}
 export function createFetch({database=()=>getDatabase(),site=worker}={}){

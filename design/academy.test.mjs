@@ -102,3 +102,33 @@ test('only administrator may assign the student programme level; self-profile ca
  const change=async id=>handleSchool(new Request('https://orbit.example/api/school/users/s/level',{method:'POST',headers:{Origin:'https://orbit.example'},body:JSON.stringify({level:'A2'})}),env,user(id));
  assert.equal((await change('t')).status,403);assert.equal((await change('a')).status,200);assert.equal(user('s').level,'A2');
 });
+
+test('every published unit is immediately available at the pupil level without group assignment',async()=>{
+ db.exec(fs.readFileSync('design/course-seed.sql','utf8'));
+ for(const [who,level] of [['s','A1'],['a2','A2']]){
+  const overview=(await request('overview',null,who)).data;assert.equal(overview.assignments.length,0);assert.equal(overview.units.length,36);assert.ok(overview.units.every(u=>u.status==='published'));
+  for(const code of ['1.1','7.2','12.3']){const lesson=await request('learning/course-'+level+'-'+code,null,who);assert.equal(lesson.status,200);assert.equal(lesson.data.steps.length,8);assert.equal(lesson.data.total,36);assert.ok(lesson.data.steps.flatMap(s=>s.questions).every(q=>!('answers' in q)&&!('answer' in q)));}
+ }
+ assert.equal((await request('learning/course-A2-1.1',null,'s')).status,403);assert.equal((await request('learning/course-B1-12.3/answer',{step:0,question:0,answer:0},'s')).status,403);
+});
+test('mixed task types are graded on the server, respect stage order and preserve progress on retries',async()=>{
+ db.exec(fs.readFileSync('design/course-seed.sql','utf8'));const id='course-A1-1.1',unit=db.prepare("SELECT * FROM navigate_units WHERE id='A1-1.1'").get(),steps=JSON.parse(unit.steps);
+ assert.equal((await request('learning/'+id+'/answer',{step:2,question:0,answer:'hello'},'s')).status,409);
+ for(let si=0;si<steps.length;si++)for(let qi=0;qi<steps[si].questions.length;qi++){
+  const q=steps[si].questions[qi];if(si===2&&qi===0){const wrong=await request('learning/'+id+'/answer',{step:si,question:qi,answer:'wrong'},'s');assert.equal(wrong.data.correct,false);assert.equal(wrong.data.progress,27);}
+  const answer=(q.type||'choice')==='choice'?q.answer:q.answers[0];const result=await request('learning/'+id+'/answer',{step:si,question:qi,answer},'s');assert.equal(result.status,200);assert.equal(result.data.correct,true);
+ }
+ assert.equal((await academyMetrics(env,'s')).xp,100);assert.equal((await academyMetrics(env,'s')).coins,20);
+ const retry=await request('learning/'+id+'/answer',{step:7,question:0,answer:steps[7].questions[0].answers[0]},'s');assert.equal(retry.data.progress,100);assert.equal((await academyMetrics(env,'s')).xp,100);
+ assert.equal((await request('learning/'+id,null,'s')).data.done.length,36);
+});
+test('class journal shows all active classmates and their homework percentages, while private answers and attendance stay scoped',async()=>{
+ db.exec(fs.readFileSync('design/course-seed.sql','utf8'));db.prepare('INSERT INTO school_members VALUES(?,?,?)').run('g','s2',Date.now());
+ db.prepare('INSERT INTO navigate_progress VALUES(?,?,?,?,?,?)').run('s2','A1-1.1','homework',0,0,Date.now());
+ const own=(await request('journal?groupId=g&month=2026-10&view=course',null,'s')).data;
+ assert.equal(own.people.length,2);assert.equal(own.assignments.length,36);assert.equal(own.view,'course');assert.equal(own.results[0].student_id,'s2');assert.equal(own.results[0].percent,2);assert.ok(own.results.every(r=>!('answer' in r)&&!('feedback' in r)));assert.ok(own.people.every(p=>!('phone' in p)&&!('login' in p)));
+ db.prepare('INSERT INTO school_lessons VALUES(?,?,?,?,?,?)').run('journal-lesson','g','2026-10-18','Class','t',Date.now());
+ db.prepare('INSERT INTO school_attendance VALUES(?,?,?,?,?,?)').run('journal-lesson','s2','absent','Private note','t',Date.now());
+ assert.equal((await request('journal?groupId=g&month=2026-10&view=course',null,'s')).data.attendance.length,0);
+ db.prepare('DELETE FROM school_members WHERE group_id=? AND student_id=?').run('g','s2');assert.equal((await request('journal?groupId=g&month=2026-10',null,'s2')).status,403);
+});

@@ -18,7 +18,7 @@ const compiled = esbuild.buildSync({
   minify: true,
   charset: 'utf8',
 }).outputFiles[0].text;
-const styleFiles=['theme.css','learning.css','school.css','campus.css','auth.css','chat.css','academy.css'];
+const styleFiles=['theme.css','learning.css','school.css','campus.css','auth.css','chat.css','academy.css','course-player.css'];
 const optimizedAssets=[['auth-studio.webp','orbit-auth-studio'],['auth-studio-mobile.webp','orbit-auth-studio-mobile'],['auth-preview.webp','orbit-auth-preview'],['listening-hero.webp','listening-hero'],['homework-sprite.webp','homework-sprite'],['orbit-hero.webp','orbit-hero']];
 const fingerprint=createHash('sha256').update(compiled);
 fingerprint.update(fs.readFileSync(__filename));
@@ -106,14 +106,14 @@ for (const [oldName, newName] of renamed) {
   fs.copyFileSync(path.join(chunks, oldName), path.join(chunks, newName));
 }
 
-for(const [files,name] of [[['theme.css'],'design'],[['learning.css'],'learning'],[['school.css'],'school'],[['campus.css','auth.css','chat.css','academy.css'],'campus']]){
+for(const [files,name] of [[['theme.css'],'design'],[['learning.css'],'learning'],[['school.css'],'school'],[['campus.css','auth.css','chat.css','academy.css','course-player.css'],'campus']]){
  const raw=replaceAssets(files.map(file=>fs.readFileSync(path.join(__dirname,file),'utf8')).join('\n'));
  const css=esbuild.transformSync(raw,{loader:'css',minify:true}).code;
  fs.writeFileSync(path.join(dist,`client/orbit-${name}.css`),css);
  fs.writeFileSync(path.join(dist,`client/orbit-${name}-${version}.css`),css);
 }
 fs.copyFileSync(path.join(__dirname, 'school-server.js'), path.join(dist, 'server/school-server.js'));
-for(const file of ['campus-server.js','practice-bank.js','chat-data.js','academy-server.js'])fs.copyFileSync(path.join(__dirname,file),path.join(dist,'server',file));
+for(const file of ['campus-server.js','practice-bank.js','chat-data.js','academy-server.js','exercise-check.js'])fs.copyFileSync(path.join(__dirname,file),path.join(dist,'server',file));
 for(const [source,target] of [['auth-studio.png','orbit-auth-studio.png'],['auth-preview.jpg','orbit-auth-preview.jpg']])fs.copyFileSync(path.join(__dirname,'assets',source),path.join(dist,'client',target));
 for(const [file,name] of optimizedAssets)fs.copyFileSync(path.join(__dirname,'assets',file),path.join(dist,`client/${name}-${version}.webp`));
 for(const file of fs.readdirSync(path.join(dist,'client/_next/static/css')))if(file.endsWith('.css')){const target=path.join(dist,'client/_next/static/css',file);fs.writeFileSync(target,replaceAssets(fs.readFileSync(target,'utf8')));}
@@ -123,6 +123,8 @@ fs.copyFileSync(path.join(__dirname,'student-phone.sql'),path.join(dist,'.openai
 fs.copyFileSync(path.join(__dirname,'chat-updates.sql'),path.join(dist,'.openai/drizzle/0007_chat.sql'));
 fs.copyFileSync(path.join(__dirname,'navigate-schema.sql'),path.join(dist,'.openai/drizzle/0008_navigate_academy.sql'));
 fs.copyFileSync(path.join(__dirname,'wallet-opening.sql'),path.join(dist,'.openai/drizzle/0009_wallet_opening.sql'));
+fs.copyFileSync(path.join(__dirname,'course-seed.sql'),path.join(dist,'.openai/drizzle/0010_original_course.sql'));
+fs.cpSync(path.join(__dirname,'assets/lessons'),path.join(dist,'client/orbit-lessons'),{recursive:true});
 fs.copyFileSync(path.join(__dirname, 'school-schema.sql'), path.join(dist, '.openai/drizzle/0003_orbit_school.sql'));
 fs.copyFileSync(path.join(__dirname, 'sphere.svg'), path.join(dist, 'client/orbit-sphere.svg'));
 fs.writeFileSync(path.join(dist,'server/orbit-entry.js'),fs.readFileSync(path.join(__dirname,'worker.js'),'utf8').replaceAll('__ORBIT_ASSET_VERSION__',version));

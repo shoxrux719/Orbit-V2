@@ -2,7 +2,7 @@ import site from './index.js';
 import { schoolUser, handleSchool, learningRequest } from './school-server.js';
 import { handleCampus } from './campus-server.js';
 import { handleAcademy } from './academy-server.js';
-const revision='fb9b1cad0208';
+const revision='b25ae6290041';
 const styles=['design','learning','school','campus'].map(name=>`<link rel="stylesheet" href="/orbit-${name}-${revision}.css">`).join('');
 
 export default {

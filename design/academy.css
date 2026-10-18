@@ -10,3 +10,10 @@
 @media(max-width:1100px){.oa-status-card small{font-size:8px}.oa-teacher .oa-status-card{padding:12px 10px}.oa-status-card b{font-size:19px}}
 @media(max-width:760px){.oa-teacher .oa-heading h1{font-size:25px!important}.oa-teacher .oa-status-card{min-height:95px;padding:13px}.oa-status-card small{font-size:9px}.oa-group-tabs small{font-size:8px}.oa-journal tbody th>button b{font-size:9px}.oa-unit-card h3{font-size:11px!important}.oa-assigned-row b{font-size:12px}.oa-assigned-row small{font-size:9px}.oa-form-grid>label{font-size:10px}.oa-teacher .oa-group-summary>div{padding:15px}}
 @media(prefers-reduced-motion:reduce){.oa-page *{scroll-behavior:auto!important;transition:none!important;animation:none!important}}
+/* Shared class journal: readable view controls and a clear personal row. */
+.oa-journal-toolbar .oc-segments{gap:3px;padding:3px;background:#f0f5fb;border-radius:10px;flex-wrap:wrap}
+.oa-journal-toolbar .oc-segments button{width:auto;height:auto;min-height:29px;padding:6px 12px;font-size:10px;white-space:nowrap;background:transparent;border-radius:8px}
+.oa-journal-toolbar .oc-segments button.is-active{background:#fff;color:#456890;box-shadow:0 2px 5px #2549740a}
+.oa-journal .oa-journal-self th,.oa-journal .oa-journal-self td{background:#edf5ff}
+.oa-journal .oa-journal-self th{box-shadow:inset 3px 0 #759fcf}
+@media(max-width:760px){.oa-journal-toolbar .oc-segments button{font-size:9px;padding:6px 9px}}

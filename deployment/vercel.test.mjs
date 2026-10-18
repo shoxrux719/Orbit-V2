@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import {createServer} from 'node:http';
+import {gzipSync} from 'node:zlib';
 import {createClient} from '@libsql/client';
 import {d1Adapter} from './d1-adapter.js';
 import {applyMigrations,ensureAdministrator,splitSQL} from './migrations.js';
@@ -13,7 +14,7 @@ const password='Private-test-password-2026';
 
 test('production migrations and administrator setup are idempotent and preserve data',async()=>{
  const client=createClient({url:'file::memory:'});try{
-  assert.equal((await applyMigrations(client,migrationDir)).length,10);
+  assert.equal((await applyMigrations(client,migrationDir)).length,11);
   await assert.rejects(ensureAdministrator(client),/ORBIT_ADMIN/);
   assert.equal((await ensureAdministrator(client,{password})).created,true);
   const before=(await client.execute("SELECT * FROM school_users WHERE role='admin'")).rows[0];
@@ -94,9 +95,28 @@ test('optimized assets use revisioned URLs, immutable cache routes and compact W
  }
  const page=await fs.readFile(base+'/_next/static/chunks/'+revision.pageName,'utf8');assert.ok(page.includes(revision.designName));
  const legacyStyles=await fs.readFile(base+'/_next/static/css/index.BUnWrGnF.css','utf8');assert.doesNotMatch(legacyStyles,/listening-hero\.png|homework-sprite\.png|orbit-hero\.png/);
+ assert.match(await fs.readFile(base+`/orbit-campus-${revision.version}.css`,'utf8'),/\.op-task-layer/);
  assert.ok((await fs.stat(base+`/orbit-auth-studio-${revision.version}.webp`)).size<80000);
  assert.ok((await fs.stat(base+`/orbit-auth-studio-mobile-${revision.version}.webp`)).size<40000);
- assert.ok((await fs.stat(base+'/_next/static/chunks/'+revision.designName)).size<300000);
+ // The interactive exercise player shares the existing app runtime. Keep its
+ // total transfer under 100 KB rather than letting the new UI grow unchecked.
+ const appBundle=await fs.readFile(base+'/_next/static/chunks/'+revision.designName);
+ assert.ok(appBundle.length<310000);assert.ok(gzipSync(appBundle).length<100000);
  const config=JSON.parse(await fs.readFile('.vercel/output/config.json','utf8'));assert.ok(config.routes.some(r=>r.headers?.['Cache-Control']?.includes('immutable')));
  for(const match of html.matchAll(/(?:src|href)="(\/(?:_next\/static|orbit-)[^"?#]+)(?:[?#][^"]*)?"/g))assert.ok((await fs.stat(base+match[1])).isFile(),match[1]);
+});
+
+test('local lesson media supports cached playback, captions, seeking and invalid ranges',async()=>{
+ const base='.vercel/output/static/orbit-lessons',files=await fs.readdir(base),app=createFetch({database:()=>null});
+ assert.equal(files.filter(f=>f.endsWith('.mp4')).length,108);
+ assert.equal(files.filter(f=>f.endsWith('.m4a')).length,36);
+ assert.equal(files.filter(f=>f.endsWith('.vtt')).length,108);
+ assert.equal(files.filter(f=>f.endsWith('.webp')).length,108);
+ for(const [extension,mime] of [['mp4','video/mp4'],['m4a','audio/mp4'],['vtt','text/vtt']]){
+  const name=files.find(f=>f.endsWith('.'+extension)),bytes=await fs.readFile(base+'/'+name),url='https://orbit.example/orbit-lessons/'+name;
+  const head=await app(new Request(url,{method:'HEAD'}));assert.equal(head.status,200);assert.ok(head.headers.get('content-type').startsWith(mime));assert.equal(head.headers.get('content-length'),String(bytes.length));assert.match(head.headers.get('cache-control'),/immutable/);assert.equal((await head.arrayBuffer()).byteLength,0);
+  const range=await app(new Request(url,{headers:{Range:'bytes=10-29'}}));assert.equal(range.status,206);assert.equal(range.headers.get('content-range'),`bytes 10-29/${bytes.length}`);assert.deepEqual(Buffer.from(await range.arrayBuffer()),bytes.subarray(10,30));
+  const suffix=await app(new Request(url,{headers:{Range:'bytes=-16'}}));assert.equal(suffix.status,206);assert.deepEqual(Buffer.from(await suffix.arrayBuffer()),bytes.subarray(-16));
+  const invalid=await app(new Request(url,{headers:{Range:'bytes='+bytes.length+'-'}}));assert.equal(invalid.status,416);assert.equal(invalid.headers.get('content-range'),`bytes */${bytes.length}`);
+ }
 });

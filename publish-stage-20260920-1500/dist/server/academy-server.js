@@ -1,4 +1,5 @@
 import {verifyPassword} from './school-server.js';
+import {validateExercise,publicExercise,checkExercise} from './exercise-check.js';
 
 const json=(value,status=200)=>Response.json(value,{status,headers:{'Cache-Control':'private, no-store'}});
 const all=async(env,sql,...args)=>(await env.DB.prepare(sql).bind(...args).all()).results;
@@ -12,7 +13,7 @@ const admin=u=>{if(u.role!=='admin')fail(403,'Раздел администра�
 const staff=u=>{if(u.role==='student')fail(403,'Раздел сотрудников.');};
 const person=p=>({id:p.id,firstName:p.first_name,lastName:p.last_name,role:p.role,level:p.level,number:p.number,avatar:p.avatar_id?'/api/school/media/'+p.avatar_id:null,gender:p.gender});
 const date=v=>{if(typeof v!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(v)||Number.isNaN(Date.parse(v))||new Date(v).toISOString().slice(0,10)!==v)fail(400,'Укажите корректную дату.');return v;};
-const secureLink=v=>{if(!v)return '';let url;try{url=new URL(text(v,2000));}catch{fail(400,'Укажите HTTPS-ссылку.');}if(url.protocol!=='https:')fail(400,'Укажите HTTPS-ссылку.');return url.href;};
+const secureLink=v=>{if(!v)return '';if(typeof v==='string'&&/^\/orbit-lessons\/[a-zA-Z0-9.-]+\.(mp4|m4a|vtt)$/.test(v))return v;let url;try{url=new URL(text(v,2000));}catch{fail(400,'Укажите HTTPS-ссылку.');}if(url.protocol!=='https:')fail(400,'Укажите HTTPS-ссылку.');return url.href;};
 async function groupAccess(env,u,id){
  const g=await first(env,'SELECT * FROM school_groups WHERE id=?',id);
  if(!g)fail(404,'Группа не найдена.');
@@ -34,8 +35,8 @@ export const scoreCTE=`WITH work AS (SELECT student_id,SUM(percent) AS xp,SUM(CA
  spent AS (SELECT user_id,SUM(cost) AS amount FROM campus_orders WHERE status!='cancelled' GROUP BY user_id)`;
 export async function academyMetrics(env,userId){
  const value=await first(env,`${scoreCTE} SELECT COALESCE(w.xp,0) AS xp,COALESCE(w.earned,0)+COALESCE(g.earned,0) AS earned,MAX(0,COALESCE(w.earned,0)+COALESCE(g.earned,0)-COALESCE(s.amount,0)) AS coins,w.average,COALESCE(w.completed,0) AS completed FROM school_users u LEFT JOIN work w ON w.student_id=u.id LEFT JOIN grants g ON g.student_id=u.id LEFT JOIN spent s ON s.user_id=u.id WHERE u.id=?`,userId);
- const rows=await all(env,"SELECT p.step_index,u.steps FROM navigate_progress p JOIN navigate_units u ON u.id=p.unit_id WHERE p.student_id=? AND p.kind='homework'",userId);
- const totals=await all(env,"SELECT DISTINCT u.id,u.steps FROM navigate_units u JOIN navigate_assignments a ON a.unit_id=u.id JOIN school_members m ON m.group_id=a.group_id WHERE m.student_id=? AND a.kind='homework'",userId);
+ const rows=await all(env,"SELECT p.step_index,u.steps FROM navigate_progress p JOIN navigate_units u ON u.id=p.unit_id WHERE p.student_id=? AND p.kind='homework' AND u.level=(SELECT level FROM school_users WHERE id=?)",userId,userId);
+ const totals=await all(env,"SELECT id,steps FROM navigate_units WHERE status='published' AND level=(SELECT level FROM school_users WHERE id=?)",userId);
  const skills={};for(const skill of ['vocabulary','grammar','listening','reading','writing','speaking']){let done=0,total=0;for(const row of totals)for(const step of JSON.parse(row.steps))if(step.skill===skill)total+=step.questions.length;for(const row of rows)if(JSON.parse(row.steps)[row.step_index]?.skill===skill)done++;skills[skill]=total?Math.min(100,Math.floor(done/total*100)):null;}
  return {...value,skills};
 }
@@ -51,13 +52,9 @@ function validateSteps(raw,published){
   if(!s||typeof s!=='object')fail(400,'Проверьте этапы юнита.');
   const type=one(s.type,['vocabulary','video','practice','listening','reading']);
   if(!Array.isArray(s.questions)||s.questions.length>40)fail(400,'В этапе должно быть до 40 вопросов.');
-  const questions=s.questions.map(q=>{
-   if(!q||typeof q!=='object')fail(400,'Проверьте вопросы юнита.');
-   if(!Array.isArray(q.options)||q.options.length<2||q.options.length>6||!Number.isInteger(q.answer)||q.answer<0||q.answer>=q.options.length)fail(400,'Для вопроса нужны 2–6 вариантов и правильный ответ.');
-   const options=q.options.map(v=>text(v,500));if(new Set(options.map(v=>v.toLowerCase())).size!==options.length)fail(400,'Варианты ответа должны различаться.');
-   return {prompt:text(q.prompt,1500),options,answer:q.answer,explanation:text(q.explanation||'',1500,false)};
-  });
-  return {type,skill:one(s.skill||({video:'listening',practice:'grammar'}[type]||type),['vocabulary','grammar','listening','reading','writing','speaking']),title:text(s.title,160),instructions:text(s.instructions||'',6000,false),mediaUrl:secureLink(s.mediaUrl||''),questions};
+  let questions;try{questions=s.questions.map(validateExercise);}catch(e){fail(400,e.message);}
+  const words=Array.isArray(s.words)?s.words.slice(0,80).map(w=>({word:text(w.word,100),meaning:text(w.meaning,200)})):[];
+  return {type,skill:one(s.skill||({video:'listening',practice:'grammar'}[type]||type),['vocabulary','grammar','listening','reading','writing','speaking']),title:text(s.title,160),instructions:text(s.instructions||'',6000,false),mediaUrl:secureLink(s.mediaUrl||''),captions:secureLink(s.captions||''),transcript:text(s.transcript||'',12000,false),words,questions};
  });
  if(published&&(steps.length<3||steps[0].type!=='vocabulary'||steps[1].type!=='video'||!steps.some(s=>s.type==='practice')||steps.some(s=>!s.questions.length)||!steps[1].mediaUrl))fail(400,'Для публикации нужны Vocabulary → Video lesson → Practice, вопросы на каждом этапе и ссылка на видео.');
  return steps;
@@ -66,7 +63,13 @@ async function assignmentsFor(env,u){
  return all(env,`SELECT a.*,u.level,u.code,u.title,u.status,u.total_questions,g.name AS group_name FROM navigate_assignments a JOIN navigate_units u ON u.id=a.unit_id JOIN school_groups g ON g.id=a.group_id WHERE ${u.role==='admin'?'1=1':u.role==='teacher'?'g.teacher_id=?':"u.level=? AND g.level=u.level AND EXISTS(SELECT 1 FROM school_members m WHERE m.group_id=g.id AND m.student_id=?)"} ORDER BY a.lesson_date DESC,a.created_at DESC`,...(u.role==='admin'?[]:u.role==='teacher'?[u.id]:[u.level,u.id]));
 }
 async function unitForStudent(env,u,assignmentId){
- const a=await first(env,'SELECT a.*,n.steps,n.total_questions,n.title,n.code,n.level,n.status FROM navigate_assignments a JOIN navigate_units n ON n.id=a.unit_id WHERE a.id=?',assignmentId);
+ if(assignmentId.startsWith('course-')){
+  const n=await first(env,"SELECT * FROM navigate_units WHERE id=? AND status='published'",assignmentId.slice(7));
+  if(!n)fail(404,'Юнит не опубликован.');
+  if(u.role==='student'&&u.level!==n.level)fail(403,'Выберите юнит своего уровня.');
+  return {...n,id:assignmentId,unit_id:n.id,kind:'homework',group_id:null};
+ }
+ const a=await first(env,'SELECT a.*,n.steps,n.total_questions,n.title,n.code,n.level,n.edition,n.status FROM navigate_assignments a JOIN navigate_units n ON n.id=a.unit_id WHERE a.id=?',assignmentId);
  if(!a)fail(404,'Задание не найдено.');const g=await groupAccess(env,u,a.group_id);
  if(u.role==='student'&&(a.status!=='published'||a.level!==u.level||g.level!==u.level))fail(403,'Этот юнит не назначен на ваш уровень.');
  return a;
@@ -125,28 +128,33 @@ export async function handleAcademy(request,env,user){
    const a=await unitForStudent(env,user,learning[1]),steps=JSON.parse(a.steps);
    if(request.method==='GET'&&!learning[2]){
     const done=await all(env,'SELECT step_index,question_index FROM navigate_progress WHERE student_id=? AND unit_id=? AND kind=?',user.id,a.unit_id,a.kind);
-    return json({assignment:a.id,title:a.title,code:a.code,kind:a.kind,total:a.total_questions,done,steps:steps.map(s=>({...s,questions:s.questions.map(({answer,explanation,...q})=>q)}))});
+    return json({assignment:a.id,title:a.title,code:a.code,level:a.level,edition:a.edition||'',kind:a.kind,total:a.total_questions,done,steps:steps.map(s=>({...s,questions:s.questions.map(publicExercise)}))});
    }
    if(request.method==='POST'&&learning[2]){
     if(user.role!=='student')fail(403,'Задания выполняют ученики.');await limit(env,'answer:'+user.id,120,60000);
     const si=b.step,qi=b.question;if(!Number.isInteger(si)||!Number.isInteger(qi)||!steps[si]?.questions[qi])fail(400,'Вопрос не найден.');
     const previous=await first(env,'SELECT COUNT(*) AS n FROM navigate_progress WHERE student_id=? AND unit_id=? AND kind=? AND step_index<?',user.id,a.unit_id,a.kind,si);
     if(previous.n!==steps.slice(0,si).reduce((n,s)=>n+s.questions.length,0))fail(409,'Сначала завершите предыдущие этапы.');
-    const q=steps[si].questions[qi];if(!Number.isInteger(b.answer)||b.answer<0||b.answer>=q.options.length)fail(400,'Выберите вариант ответа.');
-    const correct=b.answer===q.answer;
+    const q=steps[si].questions[qi];let correct;try{correct=checkExercise(q,b.answer);}catch(e){fail(400,e.message);}
     if(correct)await run(env,'INSERT INTO navigate_progress VALUES(?,?,?,?,?,?) ON CONFLICT DO NOTHING',user.id,a.unit_id,a.kind,si,qi,now);
     const progress=await first(env,'SELECT * FROM navigate_scores WHERE student_id=? AND unit_id=? AND kind=?',user.id,a.unit_id,a.kind);
-    return json({correct,explanation:correct?q.explanation:'Попробуйте ещё раз. Вернитесь к материалу этапа.',progress:progress?.percent||0});
+    return json({correct,explanation:correct?q.explanation:'Пока не совсем. Посмотри на пример и попробуй ещё раз.',...(correct?{solution:(q.type||'choice')==='choice'?q.options[q.answer]:q.answers[0]}:{}),progress:progress?.percent||0});
    }
   }
   if(path==='/api/academy/journal'&&request.method==='GET'){
    const g=await groupAccess(env,user,text(url.searchParams.get('groupId'),80)),month=text(url.searchParams.get('month'),7);if(!/^\d{4}-(0[1-9]|1[0-2])$/.test(month))fail(400,'Укажите месяц.');
-   const people=await all(env,`SELECT u.* FROM school_users u JOIN school_members m ON m.student_id=u.id WHERE m.group_id=? AND u.active=1 ${user.role==='student'?'AND u.id=?':''} ORDER BY u.last_name,u.first_name`,g.id,...(user.role==='student'?[user.id]:[]));
-   const assignments=await all(env,'SELECT a.*,n.title,n.code FROM navigate_assignments a JOIN navigate_units n ON n.id=a.unit_id WHERE a.group_id=? AND substr(a.lesson_date,1,7)=? ORDER BY a.lesson_date,a.created_at',g.id,month);
-   const results=await all(env,`SELECT s.*,a.id AS assignment_id FROM navigate_scores s JOIN navigate_assignments a ON a.unit_id=s.unit_id AND a.kind=s.kind JOIN school_members m ON m.group_id=a.group_id AND m.student_id=s.student_id WHERE a.group_id=? AND substr(a.lesson_date,1,7)=? ${user.role==='student'?'AND s.student_id=?':''}`,g.id,month,...(user.role==='student'?[user.id]:[]));
+   const people=await all(env,'SELECT u.* FROM school_users u JOIN school_members m ON m.student_id=u.id WHERE m.group_id=? AND u.active=1 ORDER BY u.last_name,u.first_name',g.id);
+   let assignments=await all(env,'SELECT a.*,n.title,n.code FROM navigate_assignments a JOIN navigate_units n ON n.id=a.unit_id WHERE a.group_id=? AND substr(a.lesson_date,1,7)=? ORDER BY a.lesson_date,a.created_at',g.id,month);
+   const course=url.searchParams.get('view')==='course'||!assignments.length;
+   let results;
+   if(course){
+    const units=await all(env,"SELECT id,code,title FROM navigate_units WHERE level=? AND status='published' ORDER BY position",g.level);
+    assignments=units.map(n=>({id:'course-'+n.id,unit_id:n.id,kind:'homework',title:n.title,code:n.code,lesson_date:'unit:'+n.id}));
+    results=await all(env,"SELECT s.student_id,s.unit_id,s.percent,s.kind,'course-'||s.unit_id AS assignment_id FROM navigate_scores s JOIN navigate_units n ON n.id=s.unit_id JOIN school_members m ON m.student_id=s.student_id WHERE m.group_id=? AND n.level=? AND s.kind='homework'",g.id,g.level);
+   }else results=await all(env,'SELECT s.student_id,s.unit_id,s.percent,s.kind,a.id AS assignment_id FROM navigate_scores s JOIN navigate_assignments a ON a.unit_id=s.unit_id AND a.kind=s.kind JOIN school_members m ON m.group_id=a.group_id AND m.student_id=s.student_id WHERE a.group_id=? AND substr(a.lesson_date,1,7)=?',g.id,month);
    const lessons=await all(env,'SELECT * FROM school_lessons WHERE group_id=? AND substr(date,1,7)=? ORDER BY date',g.id,month);
    const attendance=await all(env,`SELECT a.*,l.date FROM school_attendance a JOIN school_lessons l ON l.id=a.lesson_id WHERE l.group_id=? AND substr(l.date,1,7)=? ${user.role==='student'?'AND a.student_id=?':''}`,g.id,month,...(user.role==='student'?[user.id]:[]));
-   return json({group:g,people:people.map(person),assignments,results,lessons,attendance});
+   return json({group:g,people:people.map(person),assignments,results,lessons:course?[]:lessons,attendance,view:course?'course':'dates',selfId:user.id});
   }
   if(path==='/api/academy/flags'&&request.method==='POST'){
    staff(user);const studentId=text(b.studentId,80);if(!await first(env,"SELECT 1 FROM school_users WHERE id=? AND role='student'",studentId))fail(404,'Ученик не найден.');
